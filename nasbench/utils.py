@@ -62,8 +62,10 @@ def generate_arch(n, nasbench, need_perf=False):
         archs.append(arch)
         seqs.append(convert_arch_to_seq(arch.matrix, arch.ops))
         count += 1
-        if count >= n:
-            return archs, seqs, valid_accs
+        if n is not None and count >= n:
+            break
+
+    return archs, seqs, valid_accs
 
 
 def count_parameters(model):
@@ -90,10 +92,11 @@ class ControllerDataset(torch.utils.data.Dataset):
             decoder_input = [self.sos_id] + encoder_input[:-1]
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
-                'encoder_target': torch.FloatTensor(encoder_target),
                 'decoder_input': torch.LongTensor(decoder_input),
                 'decoder_target': torch.LongTensor(encoder_input),
             }
+            if encoder_target is not None:
+                sample['encoder_target'] = torch.FloatTensor(encoder_target)
         else:
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
