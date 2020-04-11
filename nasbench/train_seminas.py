@@ -16,6 +16,7 @@ import torch.backends.cudnn as cudnn
 import utils
 from controller import NAO
 from nasbench import api
+from train_predictor import train_predictor
 
 
 parser = argparse.ArgumentParser()
@@ -55,6 +56,8 @@ log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
     format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
+
+# NEED TO MODIFY
 def controller_train(train_queue, model, optimizer):
     objs = utils.AvgrageMeter()
     mse = utils.AvgrageMeter()
@@ -62,14 +65,17 @@ def controller_train(train_queue, model, optimizer):
     model.train()
     for step, sample in enumerate(train_queue):
         encoder_input = utils.move_to_cuda(sample['encoder_input'])
-        encoder_target = utils.move_to_cuda(sample['encoder_target'])
+        predictor_acc = utils.move_to_cuda(sample['predictor_acc'])
+        predictor_lat = utils.move_to_cuda(sample['predictor_lat'])
         decoder_input = utils.move_to_cuda(sample['decoder_input'])
         decoder_target = utils.move_to_cuda(sample['decoder_target'])
 
         optimizer.zero_grad()
-        predict_value, log_prob, arch = model(encoder_input, decoder_input)
-        loss_1 = F.mse_loss(predict_value.squeeze(), encoder_target.squeeze())
-        # NEED TO MODIFY
+        encoder_outputs, log_prob, archs = model.enc_dec(encoder_input, decoder_input)
+        loss_1 = train_predictor(model.predictor, input=encoder_outputs, parameters=model.encoder.parameters(),
+                                 target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
+        # loss_1 = F.mse_loss(predict_value.squeeze(), predictor_target.squeeze())
+
         loss_2 = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), decoder_target.view(-1))
         loss = args.trade_off * loss_1 + (1 - args.trade_off) * loss_2
         loss.backward()
@@ -97,9 +103,9 @@ def controller_infer(queue, model, step, direction='+'):
     return new_arch_list, new_predict_values
 
 
-def train_controller(model, train_input, train_target, epochs):
+def train_controller(model, train_input, train_acc, train_lat, epochs):
     logging.info('Train data: {}'.format(len(train_input)))
-    controller_train_dataset = utils.ControllerDataset(train_input, train_target, True)
+    controller_train_dataset = utils.ControllerDataset(train_input, train_acc, train_lat, True)
     controller_train_queue = torch.utils.data.DataLoader(
         controller_train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_reg)
@@ -110,7 +116,8 @@ def train_controller(model, train_input, train_target, epochs):
 
 def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_arch=0, direction='+'):
     random_synthetic_input = []
-    random_synthetic_target = []
+    random_synthetic_acc = []
+    random_synthetic_lat = []
     if random_arch > 0:
         while len(random_synthetic_input) < random_arch:
             seq = utils.generate_arch(1, nasbench)[1][0]
@@ -127,14 +134,19 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
 
                 # NEED TO MODIFY
                 arch_emb = model.encoder(encoder_input)
-                predict_value = model.predictor(arch_emb)
+                predict_acc, predict_lat = model.predictor(arch_emb)
 
-                random_synthetic_target += predict_value.data.squeeze().tolist()
-        assert len(random_synthetic_input) == len(random_synthetic_target)
+                random_synthetic_acc += predict_acc.data.squeeze().tolist()
+                random_synthetic_acc += predict_acc.data.squeeze().tolist()
+
+        assert len(random_synthetic_input) == len(random_synthetic_acc)
+        assert len(random_synthetic_lat) == len(random_synthetic_lat)
     synthetic_input = random_synthetic_input
-    synthetic_target = random_synthetic_target
-    assert len(synthetic_input) == len(synthetic_target)
-    return synthetic_input, synthetic_target
+    synthetic_acc = random_synthetic_acc
+    synthetic_lat = random_synthetic_lat
+    assert len(synthetic_input) == len(synthetic_acc)
+    assert len(synthetic_lat) == len(synthetic_lat)
+    return synthetic_input, synthetic_acc, synthetic_lat
 
 
 def main():
@@ -170,22 +182,27 @@ def main():
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
 
-    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
+    # ADD LATENCY LIST
+    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
 
     arch_pool = []
     seq_pool = []
     arch_pool_valid_acc = []
+    arch_pool_lat = []
     for i in range(args.iteration+1):
         logging.info('Iteration {}'.format(i+1))
         if not child_arch_pool_valid_acc:
             for arch in child_arch_pool:
                 data = nasbench.query(arch)
                 child_arch_pool_valid_acc.append(data['validation_accuracy'])
+                child_arch_pool_lat.append(data['training_time'])
 
         arch_pool += child_arch_pool
         arch_pool_valid_acc += child_arch_pool_valid_acc
+        arch_pool_lat += child_arch_pool_lat
         seq_pool += child_seq_pool
 
+        # NEED PARETO SORTING
         arch_pool_valid_acc_sorted_indices = np.argsort(arch_pool_valid_acc)[::-1]
         arch_pool = [arch_pool[i] for i in arch_pool_valid_acc_sorted_indices]
         seq_pool = [seq_pool[i] for i in arch_pool_valid_acc_sorted_indices]
@@ -213,27 +230,31 @@ def main():
         train_encoder_input = seq_pool
         min_val = min(arch_pool_valid_acc)
         max_val = max(arch_pool_valid_acc)
-        train_encoder_target = [(i - min_val) / (max_val - min_val) for i in arch_pool_valid_acc]
+        train_acc_target = [(i - min_val) / (max_val - min_val) for i in arch_pool_valid_acc]
+        min_val = min(arch_pool_lat)
+        max_val = max(arch_pool_lat)
+        train_lat_target = [(i - min_val) / (max_val - min_val) for i in arch_pool_lat]
 
         # Pre-train
         logging.info('Pre-train EPD')
-        train_controller(controller, train_encoder_input, train_encoder_target, args.pretrain_epochs)
+        train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
         logging.info('Generate synthetic data for EPD')
-        synthetic_encoder_input, synthetic_encoder_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
+        synthetic_encoder_input, synthetic_acc_target, synthetic_lat_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
         if args.up_sample_ratio is None:
             up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
         else:
             up_sample_ratio = args.up_sample_ratio
         all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
-        all_encoder_target = train_encoder_target * up_sample_ratio + synthetic_encoder_target
+        all_acc_target = train_acc_target * up_sample_ratio + synthetic_acc_target
+        all_lat_target = train_lat_target * up_sample_ratio + synthetic_lat_target
         # Train
         logging.info('Train EPD')
-        train_controller(controller, all_encoder_input, all_encoder_target, args.epochs)
+        train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
         logging.info('Finish training EPD')
         
-    
+        # NEED TO MODIFY
         new_archs = []
         new_seqs = []
         predict_step_size = 0

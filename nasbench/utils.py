@@ -2,7 +2,6 @@ import math
 import numpy as np
 import torch
 import torch.utils.data
-import torch.nn.functional as F
 from nasbench import api
 
 INPUT = 'input'
@@ -44,6 +43,7 @@ def generate_arch(n, nasbench, need_perf=False):
     archs = []
     seqs = []
     valid_accs = []
+    lats = []
     all_keys = list(nasbench.hash_iterator())
     np.random.shuffle(all_keys)
     for key in all_keys:
@@ -59,13 +59,14 @@ def generate_arch(n, nasbench, need_perf=False):
             if data['validation_accuracy'] < 0.9:
                 continue
             valid_accs.append(data['validation_accuracy'])
+            lats.append(data['training_time'])
         archs.append(arch)
         seqs.append(convert_arch_to_seq(arch.matrix, arch.ops))
         count += 1
         if n is not None and count >= n:
             break
 
-    return archs, seqs, valid_accs
+    return archs, seqs, valid_accs, lats
 
 
 def count_parameters(model):
@@ -74,37 +75,49 @@ def count_parameters(model):
 
 # @NEED TO MODIFY
 class ControllerDataset(torch.utils.data.Dataset):
-    def __init__(self, inputs, targets=None, train=True, sos_id=0, eos_id=0):
+    def __init__(self, inputs, accs=None, lats=None, train=True, sos_id=0, eos_id=0):
+        # inputs : seqs
         super(ControllerDataset, self).__init__()
-        if targets is not None:
-            assert len(inputs) == len(targets)
+        if accs is not None:
+            assert len(inputs) == len(accs)
+        if lats is not None:
+            assert len(inputs) == len(lats)
         self.inputs = inputs
-        self.targets = targets
+        self.accs = accs
+        self.lats = lats
         self.train = train
         self.sos_id = sos_id
         self.eos_id = eos_id
     
     def __getitem__(self, index):
         encoder_input = self.inputs[index]
-        predictor_target = None
-        if self.targets is not None:
-            predictor_target = [self.targets[index]]
+        predictor_acc = None
+        predictor_lat = None
+        if self.accs is not None:
+            predictor_acc = [self.accs[index]]
+        if self.lats is not None:
+            predictor_lat = [self.lats[index]]
         if self.train:
             decoder_input = [self.sos_id] + encoder_input[:-1]
+            # NEED TO MODIFY
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
                 'decoder_input': torch.LongTensor(decoder_input),
                 'decoder_target': torch.LongTensor(encoder_input),
             }
-            if predictor_target is not None:
-                sample['encoder_target'] = torch.FloatTensor(predictor_target)
+            if predictor_acc is not None:
+                sample['predictor_acc'] = torch.FloatTensor(predictor_acc)
+            if predictor_lat is not None:
+                sample['predictor_lat'] = torch.FloatTensor(predictor_lat)
         else:
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
                 'decoder_target': torch.LongTensor(encoder_input),
             }
-            if predictor_target is not None:
-                sample['encoder_target'] = torch.FloatTensor(predictor_target)
+            if predictor_acc is not None:
+                sample['encoder_acc'] = torch.FloatTensor(predictor_acc)
+            if predictor_lat is not None:
+                sample['encoder_lat'] = torch.FloatTensor(predictor_lat)
         return sample
     
     def __len__(self):

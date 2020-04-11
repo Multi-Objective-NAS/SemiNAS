@@ -1,17 +1,20 @@
-import os
-import logging
-import math
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from encoder import Encoder
 from decoder import Decoder
-import utils
-
+from predictor import Predictor
 
 SOS_ID = 0
 EOS_ID = 0
+
+
+def generate_arch_emb(self, x):
+    x = torch.mean(x, dim=1)
+    x = F.normalize(x, 2, dim=-1)
+    arch_emb = x
+
+    return arch_emb
 
 class NAO(nn.Module):
     def __init__(self,
@@ -53,12 +56,20 @@ class NAO(nn.Module):
         self.decoder.rnn.flatten_parameters()
 
     # NEED TO MODIFY
-    def forward(self, input_variable, target_variable=None):
+    def enc_dec(self, input_variable, target_variable=None):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
-        arch_emb, predict_value = self.predictor(encoder_outputs)
+        arch_emb = generate_arch_emb(encoder_outputs)
         decoder_hidden = (arch_emb.unsqueeze(0), arch_emb.unsqueeze(0))
         decoder_outputs, archs = self.decoder(target_variable, decoder_hidden, encoder_outputs)
-        return predict_value, decoder_outputs, archs
+        return encoder_outputs, decoder_outputs, archs
+
+    # NEED TO MODIFY
+    def forward(self, input_variable, target_variable=None):
+        encoder_outputs, encoder_hidden = self.encoder(input_variable)
+        arch_emb, predict_acc, predict_lat = self.predictor(encoder_outputs)
+        decoder_hidden = (arch_emb.unsqueeze(0), arch_emb.unsqueeze(0))
+        decoder_outputs, archs = self.decoder(target_variable, decoder_hidden, encoder_outputs)
+        return predict_acc, predict_lat, decoder_outputs, archs
 
     # NEED TO MODIFY
     def generate_new_arch(self, input_variable, predict_lambda=1, direction='-'):
