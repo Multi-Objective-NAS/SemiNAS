@@ -72,6 +72,7 @@ def count_parameters(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters())
 
 
+# @NEED TO MODIFY
 class ControllerDataset(torch.utils.data.Dataset):
     def __init__(self, inputs, targets=None, train=True, sos_id=0, eos_id=0):
         super(ControllerDataset, self).__init__()
@@ -85,9 +86,9 @@ class ControllerDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, index):
         encoder_input = self.inputs[index]
-        encoder_target = None
+        predictor_target = None
         if self.targets is not None:
-            encoder_target = [self.targets[index]]
+            predictor_target = [self.targets[index]]
         if self.train:
             decoder_input = [self.sos_id] + encoder_input[:-1]
             sample = {
@@ -95,15 +96,15 @@ class ControllerDataset(torch.utils.data.Dataset):
                 'decoder_input': torch.LongTensor(decoder_input),
                 'decoder_target': torch.LongTensor(encoder_input),
             }
-            if encoder_target is not None:
-                sample['encoder_target'] = torch.FloatTensor(encoder_target)
+            if predictor_target is not None:
+                sample['encoder_target'] = torch.FloatTensor(predictor_target)
         else:
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
                 'decoder_target': torch.LongTensor(encoder_input),
             }
-            if encoder_target is not None:
-                sample['encoder_target'] = torch.FloatTensor(encoder_target)
+            if predictor_target is not None:
+                sample['encoder_target'] = torch.FloatTensor(predictor_target)
         return sample
     
     def __len__(self):

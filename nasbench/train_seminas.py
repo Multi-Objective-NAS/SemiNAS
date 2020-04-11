@@ -69,6 +69,7 @@ def controller_train(train_queue, model, optimizer):
         optimizer.zero_grad()
         predict_value, log_prob, arch = model(encoder_input, decoder_input)
         loss_1 = F.mse_loss(predict_value.squeeze(), encoder_target.squeeze())
+        # NEED TO MODIFY
         loss_2 = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), decoder_target.view(-1))
         loss = args.trade_off * loss_1 + (1 - args.trade_off) * loss_2
         loss.backward()
@@ -123,7 +124,11 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             model.eval()
             for sample in controller_synthetic_queue:
                 encoder_input = sample['encoder_input'].cuda()
-                _, _, _, predict_value = model.encoder(encoder_input)
+
+                # NEED TO MODIFY
+                arch_emb = model.encoder(encoder_input)
+                predict_value = model.predictor(arch_emb)
+
                 random_synthetic_target += predict_value.data.squeeze().tolist()
         assert len(random_synthetic_input) == len(random_synthetic_target)
     synthetic_input = random_synthetic_input
