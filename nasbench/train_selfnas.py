@@ -143,9 +143,11 @@ def selftrain_controller(model, train_input, epochs):
         controller_train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_reg)
+    torch.save(controller.state_dict(), 'self_trained_test.pth')
     for epoch in range(1, epochs + 1):
         loss, mse, ce = controller_selftrain(controller_train_queue_1, controller_train_queue_2, model, optimizer)
         logging.info("epoch %04d train loss %.6f mse %.6f ce %.6f", epoch, loss, mse, ce)
+        torch.save(controller.state_dict(), 'self_trained_%d.pth' % epoch)
 
 
 def controller_infer(queue, model, step, direction='+'):
@@ -171,7 +173,6 @@ def train_controller(model, train_input, train_target, epochs):
     for epoch in range(1, epochs + 1):
         loss, mse, ce = controller_train(controller_train_queue, model, optimizer)
         logging.info("epoch %04d train loss %.6f mse %.6f ce %.6f", epoch, loss, mse, ce)
-        torch.save(controller.state_dict(), 'self_trained_%d.pth' % epoch)
 
 
 def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_arch=0, direction='+'):
