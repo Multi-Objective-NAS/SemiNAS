@@ -5,7 +5,11 @@ from __future__ import print_function
 import torch.nn as nn
 import torch.nn.functional as F
 
-
+'''
+MODIFY:
+Encoder was encoding + predictor.
+I separated encoder model( encoding ) + arch_emb function + predictor model
+'''
 class Encoder(nn.Module):
     def __init__(self,
                  layers,

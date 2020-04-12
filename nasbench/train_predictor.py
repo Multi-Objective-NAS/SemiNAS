@@ -9,10 +9,15 @@ import metrics
 import model_selector
 from min_norm_solvers import MinNormSolver, gradient_normalizers
 
-NUM_EPOCHS = 100
-
+'''
+MODIFY:
+In train_seminas.py, I separate training step into 2 step.
+1. encoder and decoder forward for reconstruction loss.
+2. train_predictor.py is encoder+predictor forward for loss in acc, lat
+ '''
 def train_predictor(model, input, parameters, target_acc, target_lat, optimizer):
-    # NEED TO MODIFY
+    # parameters : encoder_outputs and model['rep'](parent model for two task)
+    # Later, find grads w.r.t parameters
     parameters += model['rep'].parameters()
 
     model_params = []
@@ -38,6 +43,7 @@ def train_predictor(model, input, parameters, target_acc, target_lat, optimizer)
         loss_data[t] = loss.data[0]
         loss.backward()
         grads[t] = []
+        # Find grads of loss in task w.r.t. parameters
         for param in parameters:
             if param.grad is not None:
                 grads[t].append(Variable(param.grad.data.clone(), requires_grad=False))
@@ -49,11 +55,14 @@ def train_predictor(model, input, parameters, target_acc, target_lat, optimizer)
             grads[t][gr_i] = grads[t][gr_i] / gn[t]
 
     # Frank-Wolfe iteration to compute scales.
+    # min_norm = w^2 = alpha * v1^2 + (1-alpha) * v2^2
+    # sol = (alpha, 1-alpha)
     sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in model.tasks])
     for i, t in enumerate(model.tasks):
         scale[t] = float(sol[i])
 
-    # Scaled back-propagation
+    # Back-propagation
+    # scale task: alpha * task1 + (1-alpha) * task2
     optimizer.zero_grad()
     rep, _ = model['rep'](input, mask)
     for i, t in enumerate(model.tasks):
@@ -64,6 +73,8 @@ def train_predictor(model, input, parameters, target_acc, target_lat, optimizer)
             loss = loss + scale[t] * loss_t
         else:
             loss = scale[t] * loss_t
+
+    # return scaled loss
     return loss
 
 

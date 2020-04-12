@@ -30,6 +30,11 @@ class NAO(nn.Module):
                  decoder_length,
                  ):
         super(NAO, self).__init__()
+        '''
+        MODIFY:
+        Encoder was encoding + predictor.
+        I separate encoder model( encoding ) + arch_emb function + predictor model
+        '''
         self.encoder = Encoder(
             encoder_layers,
             hidden_size,
@@ -38,9 +43,7 @@ class NAO(nn.Module):
             source_length,
             encoder_length,
         )
-        # NEED TO MODIFY
         self.predictor = Predictor()
-
         self.decoder = Decoder(
             decoder_layers,
             hidden_size,
@@ -55,7 +58,12 @@ class NAO(nn.Module):
         self.encoder.rnn.flatten_parameters()
         self.decoder.rnn.flatten_parameters()
 
-    # NEED TO MODIFY
+    '''
+    MODIFY:
+    In train_seminas.py, I separate training step into 2 step.
+    This is encoder and decoder forward for reconstruction loss.
+    train_predictor.py is encoder+predictor forward for loss in acc, lat.
+    '''
     def enc_dec(self, input_variable, target_variable=None):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
         arch_emb = generate_arch_emb(encoder_outputs)
@@ -63,7 +71,11 @@ class NAO(nn.Module):
         decoder_outputs, archs = self.decoder(target_variable, decoder_hidden, encoder_outputs)
         return encoder_outputs, decoder_outputs, archs
 
-    # NEED TO MODIFY
+    '''
+    MODIFY:
+    Encoder was encoding + predictor.
+    I separate encoder model( encoding ) + arch_emb function + predictor model
+    '''
     def forward(self, input_variable, target_variable=None):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
         arch_emb, predict_acc, predict_lat = self.predictor(encoder_outputs)
@@ -71,7 +83,14 @@ class NAO(nn.Module):
         decoder_outputs, archs = self.decoder(target_variable, decoder_hidden, encoder_outputs)
         return predict_acc, predict_lat, decoder_outputs, archs
 
-    # NEED TO MODIFY
+    '''
+    MODIFY:
+    Encoder was encoding + predictor.
+    I separate encoder model( encoding ) + arch_emb function + predictor model.
+    
+    So, infer process in encoder
+        =>  infer process in predictor
+    '''
     def generate_new_arch(self, input_variable, predict_lambda=1, direction='-'):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
         new_encoder_outputs, new_arch_emb, new_predict_value = self.predictor.infer(encoder_outputs)

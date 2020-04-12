@@ -73,7 +73,10 @@ def count_parameters(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters())
 
 
-# @NEED TO MODIFY
+'''
+MODIFY:
+encoder_target => predictor_acc, predictor_lat
+'''
 class ControllerDataset(torch.utils.data.Dataset):
     def __init__(self, inputs, accs=None, lats=None, train=True, sos_id=0, eos_id=0):
         # inputs : seqs
@@ -99,7 +102,6 @@ class ControllerDataset(torch.utils.data.Dataset):
             predictor_lat = [self.lats[index]]
         if self.train:
             decoder_input = [self.sos_id] + encoder_input[:-1]
-            # NEED TO MODIFY
             sample = {
                 'encoder_input': torch.LongTensor(encoder_input),
                 'decoder_input': torch.LongTensor(decoder_input),

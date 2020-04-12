@@ -57,7 +57,14 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO,
     format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
 
-# NEED TO MODIFY
+'''
+MODIFY:
+encoder_target => predictor_acc, predictor_lat
+Separate training step into 2 step.
+Get encoder_outputs and log_prob(decoder_outputs) by enc_dec func.
+Enter encoder_outpurs into predictor and triain it.
+Then, get loss_1 for acc, lat.
+'''
 def controller_train(train_queue, model, optimizer):
     objs = utils.AvgrageMeter()
     mse = utils.AvgrageMeter()
@@ -132,7 +139,11 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             for sample in controller_synthetic_queue:
                 encoder_input = sample['encoder_input'].cuda()
 
-                # NEED TO MODIFY
+                '''
+                NEED TO MODIFY:
+                - Find grads on encoder_outputs by using mgda.
+                - update encoder_outputs by grads.
+                '''
                 arch_emb = model.encoder(encoder_input)
                 predict_acc, predict_lat = model.predictor(arch_emb)
 
@@ -202,7 +213,10 @@ def main():
         arch_pool_lat += child_arch_pool_lat
         seq_pool += child_seq_pool
 
-        # NEED PARETO SORTING
+        '''
+        NEED TO MODIFY:
+        - pareto sorting
+        '''
         arch_pool_valid_acc_sorted_indices = np.argsort(arch_pool_valid_acc)[::-1]
         arch_pool = [arch_pool[i] for i in arch_pool_valid_acc_sorted_indices]
         seq_pool = [seq_pool[i] for i in arch_pool_valid_acc_sorted_indices]
@@ -254,7 +268,11 @@ def main():
         train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
         logging.info('Finish training EPD')
         
-        # NEED TO MODIFY
+        '''
+        NEED TO MODIFY:
+        From this line,
+        I stop modifying the code...
+        '''
         new_archs = []
         new_seqs = []
         predict_step_size = 0

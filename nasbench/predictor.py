@@ -5,6 +5,11 @@ from torch.autograd import Variable
 import torch
 from controller import generate_arch_emb
 
+
+'''
+NEED TO MODIFY:
+- think about how to make model for 1-d input
+'''
 class MultiLeNetR(nn.Module):
     def __init__(self):
         super(MultiLeNetR, self).__init__()
@@ -48,6 +53,13 @@ class MultiLeNetO(nn.Module):
         return F.log_softmax(x, dim=1), mask
 
 
+'''
+MODIFY:
+Add predictor model
+model['rep']: parent model for two tasks.
+model['rep'] output ->  model['acc']
+                  |-->  model['lat']
+'''
 class Predictor(nn.Module):
     def __init__(self):
         self.model = {}
@@ -66,6 +78,11 @@ class Predictor(nn.Module):
 
         return arch_emb, out['acc'], out['lat']
 
+    '''
+    NEED_TO_MODIFY:
+    - Find grads on acc and latency w.r.t encoder_outputs
+    - Update encoder_outputs by adding or subtracting grads
+    '''
     def infer(self, x, predict_lambda, direction='-'):
         # x : encoder_outputs
         '''
@@ -96,7 +113,8 @@ class Predictor(nn.Module):
         encoder_outputs = x
         arch_emb, predict_value = self.forward(x)
 
-        # MGDA...
+        # -----------------------------------------------------------------------------------------
+        # part that needs mgda
         grads_on_outputs = torch.autograd.grad(predict_value, encoder_outputs, torch.ones_like(predict_value))[0]
         if direction == '+':
             new_encoder_outputs = encoder_outputs + predict_lambda * grads_on_outputs
@@ -104,6 +122,7 @@ class Predictor(nn.Module):
             new_encoder_outputs = encoder_outputs - predict_lambda * grads_on_outputs
         else:
             raise ValueError('Direction must be + or -, got {} instead'.format(direction))
+        # -----------------------------------------------------------------------------------------
 
         new_encoder_outputs = F.normalize(new_encoder_outputs, 2, dim=-1)
         new_arch_emb = torch.mean(new_encoder_outputs, dim=1)
