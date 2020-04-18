@@ -17,6 +17,7 @@ import utils
 from controller import NAO
 from nasbench import api
 from train_predictor import train_predictor_w_encoder, train_predictor
+from multi_objective_sort import multi_objective_sort
 
 parser = argparse.ArgumentParser()
 # Basic model parameters.
@@ -155,7 +156,7 @@ def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, val_dst
     predictor_val_queue = torch.utils.data.DataLoader(
         predictor_val_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
 
-    train_predictor(model, predictor_train_queue, predictor_val_queue, epochs, val_dst,
+    train_predictor(model.predictor, predictor_train_queue, predictor_val_queue, epochs, val_dst,
                     batch_size=args.batch_size, lr=args.lr, l2_reg=args.l2_reg,
                     grad_bound=args.grad_bound)
 
@@ -200,6 +201,7 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
 
         assert len(random_synthetic_input) == len(random_synthetic_acc)
         assert len(random_synthetic_lat) == len(random_synthetic_lat)
+
     synthetic_input = random_synthetic_input
     synthetic_acc = random_synthetic_acc
     synthetic_lat = random_synthetic_lat
@@ -209,9 +211,9 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
 
 
 def main():
-    if not torch.cuda.is_available():
-        logging.info('No GPU found!')
-        sys.exit(1)
+    #if not torch.cuda.is_available():
+    #    logging.info('No GPU found!')
+    #    sys.exit(1)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -263,13 +265,10 @@ def main():
         seq_pool += child_seq_pool
 
         '''
-        NEED TO MODIFY:
+        MODIFY:
         - pareto sorting
         '''
-        arch_pool_valid_acc_sorted_indices = np.argsort(arch_pool_valid_acc)[::-1]
-        arch_pool = [arch_pool[i] for i in arch_pool_valid_acc_sorted_indices]
-        seq_pool = [seq_pool[i] for i in arch_pool_valid_acc_sorted_indices]
-        arch_pool_valid_acc = [arch_pool_valid_acc[i] for i in arch_pool_valid_acc_sorted_indices]
+        multi_objective_sort(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat)
 
         with open(os.path.join(args.output_dir, 'arch_pool.{}'.format(i)), 'w') as fa:
             for arch, seq, valid_acc in zip(arch_pool, seq_pool, arch_pool_valid_acc):
@@ -324,13 +323,12 @@ def main():
         predict_step_size = 0
         unique_input = train_encoder_input + synthetic_encoder_input
         unique_acc = train_acc_target + synthetic_acc_target
-        unique_acc = train_lat_target + synthetic_lat_target
+        unique_lat = train_lat_target + synthetic_lat_target
         '''
-        NEED TO MODIFY:
+        MODIFY:
         - pareto sorting
         '''
-        unique_indices = np.argsort(unique_target)[::-1]
-        unique_input = [unique_input[i] for i in unique_indices]
+        multi_objective_sort(unique_input, unique_input, unique_acc, unique_lat)
         topk_archs = unique_input[:args.k]
 
         controller_infer_dataset = utils.ControllerDataset(topk_archs, None, False)
