@@ -93,10 +93,10 @@ class NAO(nn.Module):
     '''
     def generate_new_arch(self, input_variable, predict_lambda=1, direction='-'):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
-        new_encoder_outputs, new_arch_emb, new_predict_value = self.predictor.infer(encoder_outputs)
+        predict_acc, predict_lat, new_encoder_outputs, new_arch_emb, new_predict_acc, new_predict_lat = self.predictor.infer(encoder_outputs)
         new_encoder_hidden = (new_arch_emb.unsqueeze(0), new_arch_emb.unsqueeze(0))
         decoder_outputs, new_archs = self.decoder(None, new_encoder_hidden, new_encoder_outputs)
-        return new_archs, new_predict_value
+        return new_archs, new_predict_acc, new_predict_lat
 
 
 class SiameseNAO(nn.Module):

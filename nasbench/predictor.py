@@ -21,7 +21,7 @@ class MultiLeNetR(nn.Module):
     def dropout1dwithmask(self, x, mask):
         channel_size = x.shape[1]
         if mask is None:
-            mask = Variable(torch.bernoulli(torch.ones(1, channel_size, 1, 1) * 0.5).cuda())
+            mask = Variable(torch.bernoulli(torch.ones(1, channel_size, 1) * 0.5).cuda())
         mask = mask.expand(x.shape)
         return mask
 
@@ -67,6 +67,11 @@ class Predictor(nn.Module):
         self.tasks = ['acc', 'lat']
         for t in self.tasks:
             self.model[t] = MultiLeNetO()
+        self.scales = {}
+
+    def init_scale(self):
+        for t in self.tasks:
+            self.scales[t] = 0
 
     def forward(self, x):
         # x : encoder_outputs
@@ -82,8 +87,11 @@ class Predictor(nn.Module):
     NEED_TO_MODIFY:
     - Find grads on acc and latency w.r.t encoder_outputs
     - Update encoder_outputs by adding or subtracting grads
+    - Problem: scaled grads for MO needs loss:
+    - train 때 average scale을 구해놓고 이를 사용하기! <- 어짜피 scale * 1/2 * (y - y_0)^2 = - scale * ( y-y_0 ) * grads on y_0
+       이기 때문에 실제 loss가 있을 때 주는 영향은 grads on y_0의 크기! 따라서 이는 무시해도 되겠다는 생각으로....
     '''
-    def infer(self, x, predict_lambda, direction='-'):
+    def infer(self, x, predict_lambda=1, direction='-'):
         # x : encoder_outputs
         '''
         --------------------------------------------------------------------------------------------------
@@ -111,11 +119,15 @@ class Predictor(nn.Module):
         --------------------------------------------------------------------------------------------------
         '''
         encoder_outputs = x
-        arch_emb, predict_value = self.forward(x)
+        arch_emb, predict_acc, predict_lat = self.forward(x)
 
         # -----------------------------------------------------------------------------------------
-        # part that needs mgda
-        grads_on_outputs = torch.autograd.grad(predict_value, encoder_outputs, torch.ones_like(predict_value))[0]
+        # code used grads on accuracy function w.r.t. encoder_outputs
+        # Not grads on loss function w.r.t. encoder_outputs
+        acc_grads_on_outputs = torch.autograd.grad(predict_acc, encoder_outputs, torch.ones_like(predict_acc))[0]
+        lat_grads_on_outputs = torch.autograd.grad(predict_lat, encoder_outputs, torch.ones_like(predict_lat))[0]
+        grads_on_outputs = self.scales["acc"]*acc_grads_on_outputs + self.scales["lat"]*lat_grads_on_outputs
+
         if direction == '+':
             new_encoder_outputs = encoder_outputs + predict_lambda * grads_on_outputs
         elif direction == '-':
@@ -125,8 +137,6 @@ class Predictor(nn.Module):
         # -----------------------------------------------------------------------------------------
 
         new_encoder_outputs = F.normalize(new_encoder_outputs, 2, dim=-1)
-        new_arch_emb = torch.mean(new_encoder_outputs, dim=1)
-        new_arch_emb = F.normalize(new_arch_emb, 2, dim=-1)
-        new_predict_value = self.forward(new_encoder_outputs)
+        new_arch_emb, new_predict_acc, new_predict_lat = self.forward(new_encoder_outputs)
 
-        return predict_value, new_encoder_outputs, new_arch_emb, new_predict_value
+        return predict_acc, predict_lat, new_encoder_outputs, new_arch_emb, new_predict_acc, new_predict_lat

@@ -62,7 +62,7 @@ MODIFY:
 encoder_target => predictor_acc, predictor_lat
 Separate training step into 2 step.
 Get encoder_outputs and log_prob(decoder_outputs) by enc_dec func.
-Enter encoder_outpurs into predictor and triain it.
+Enter encoder_outputs into predictor and triain it.
 Then, get loss_1 for acc, lat.
 '''
 def controller_train(train_queue, model, optimizer):
@@ -96,18 +96,27 @@ def controller_train(train_queue, model, optimizer):
     
     return objs.avg, mse.avg, nll.avg
 
-
+'''
+Modify
+controller generate_new_arch method
+return new accuracy and latency
+'''
 def controller_infer(queue, model, step, direction='+'):
     new_arch_list = []
-    new_predict_values = []
+    new_predict_accs = []
+    new_predict_lats = []
     model.eval()
+
     for i, sample in enumerate(queue):
         encoder_input = utils.move_to_cuda(sample['encoder_input'])
         model.zero_grad()
-        new_arch, new_predict_value = model.generate_new_arch(encoder_input, step, direction=direction)
+        new_arch, new_predict_acc, new_predict_lat = model.generate_new_arch(encoder_input, step, direction=direction)
+
         new_arch_list.extend(new_arch.data.squeeze().tolist())
-        new_predict_values.extend(new_predict_value.data.squeeze().tolist())
-    return new_arch_list, new_predict_values
+        new_predict_accs.extend(new_predict_acc.data.squeeze().tolist())
+        new_predict_lats.extend(new_predict_lat.data.squeeze().tolist())
+
+    return new_arch_list, new_predict_accs, new_predict_lats
 
 
 def train_controller(model, train_input, train_acc, train_lat, epochs):
@@ -116,6 +125,8 @@ def train_controller(model, train_input, train_acc, train_lat, epochs):
     controller_train_queue = torch.utils.data.DataLoader(
         controller_train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_reg)
+    model.predictor.init_scale()
+
     for epoch in range(1, epochs + 1):
         loss, mse, ce = controller_train(controller_train_queue, model, optimizer)
         logging.info("epoch %04d train loss %.6f mse %.6f ce %.6f", epoch, loss, mse, ce)
@@ -138,17 +149,10 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             model.eval()
             for sample in controller_synthetic_queue:
                 encoder_input = sample['encoder_input'].cuda()
-
-                '''
-                NEED TO MODIFY:
-                - Find grads on encoder_outputs by using mgda.
-                - update encoder_outputs by grads.
-                '''
-                arch_emb = model.encoder(encoder_input)
-                predict_acc, predict_lat = model.predictor(arch_emb)
-
+                encoder_outputs, encoder_hidden = model.encoder(encoder_input)
+                arch_emb, predict_acc, predict_lat = model.predictor(encoder_outputs)
                 random_synthetic_acc += predict_acc.data.squeeze().tolist()
-                random_synthetic_acc += predict_acc.data.squeeze().tolist()
+                random_synthetic_lat += predict_lat.data.squeeze().tolist()
 
         assert len(random_synthetic_input) == len(random_synthetic_acc)
         assert len(random_synthetic_lat) == len(random_synthetic_lat)
@@ -202,7 +206,7 @@ def main():
     arch_pool_lat = []
     for i in range(args.iteration+1):
         logging.info('Iteration {}'.format(i+1))
-        if not child_arch_pool_valid_acc:
+        if not child_arch_pool_valid_acc or not child_arch_pool_lat:
             for arch in child_arch_pool:
                 data = nasbench.query(arch)
                 child_arch_pool_valid_acc.append(data['validation_accuracy'])
@@ -267,27 +271,28 @@ def main():
         logging.info('Train EPD')
         train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
         logging.info('Finish training EPD')
-        
-        '''
-        NEED TO MODIFY:
-        From this line,
-        I stop modifying the code...
-        '''
+
         new_archs = []
         new_seqs = []
         predict_step_size = 0
         unique_input = train_encoder_input + synthetic_encoder_input
-        unique_target = train_encoder_target + synthetic_encoder_target
+        unique_acc = train_acc_target + synthetic_acc_target
+        unique_acc = train_lat_target + synthetic_lat_target
+        '''
+        NEED TO MODIFY:
+        - pareto sorting
+        '''
         unique_indices = np.argsort(unique_target)[::-1]
         unique_input = [unique_input[i] for i in unique_indices]
         topk_archs = unique_input[:args.k]
+
         controller_infer_dataset = utils.ControllerDataset(topk_archs, None, False)
         controller_infer_queue = torch.utils.data.DataLoader(controller_infer_dataset, batch_size=len(controller_infer_dataset), shuffle=False, pin_memory=True)
         
         while len(new_archs) < args.new_arch:
             predict_step_size += 1
             logging.info('Generate new architectures with step size %d', predict_step_size)
-            new_seq, new_perfs = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
+            new_seq, new_accs, new_lats = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
             for seq in new_seq:
                 matrix, ops = utils.convert_seq_to_arch(seq)
                 arch = api.ModelSpec(matrix=matrix, ops=ops)
@@ -303,7 +308,7 @@ def main():
         child_arch_pool = new_archs
         child_seq_pool = new_seqs
         child_arch_pool_valid_acc = []
-        child_arch_pool_test_acc = []
+        child_arch_pool_lat = []
         logging.info("Generate %d new archs", len(child_arch_pool))
 
     print(nasbench.get_budget_counters())

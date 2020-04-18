@@ -60,6 +60,7 @@ def train_predictor(model, input, parameters, target_acc, target_lat, optimizer)
     sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in model.tasks])
     for i, t in enumerate(model.tasks):
         scale[t] = float(sol[i])
+        model.scales[t] = 0.999 * model.scales[t] + 0.001 * scale[t]
 
     # Back-propagation
     # scale task: alpha * task1 + (1-alpha) * task2
