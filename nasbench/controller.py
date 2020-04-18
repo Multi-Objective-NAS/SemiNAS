@@ -85,11 +85,8 @@ class NAO(nn.Module):
 
     '''
     MODIFY:
-    Encoder was encoding + predictor.
-    I separate encoder model( encoding ) + arch_emb function + predictor model.
-    
-    So, infer process in encoder
-        =>  infer process in predictor
+    - Find grads on acc and latency w.r.t encoder_outputs
+    - Update encoder_outputs by adding or subtracting grads
     '''
     def generate_new_arch(self, input_variable, predict_lambda=1, direction='-'):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)

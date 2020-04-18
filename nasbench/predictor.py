@@ -84,7 +84,7 @@ class Predictor(nn.Module):
         return arch_emb, out['acc'], out['lat']
 
     '''
-    NEED_TO_MODIFY:
+    MODIFY:
     - Find grads on acc and latency w.r.t encoder_outputs
     - Update encoder_outputs by adding or subtracting grads
     - Problem: scaled grads for MO needs loss:

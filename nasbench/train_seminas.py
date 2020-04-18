@@ -16,8 +16,7 @@ import torch.backends.cudnn as cudnn
 import utils
 from controller import NAO
 from nasbench import api
-from train_predictor import train_predictor
-
+from train_predictor import train_predictor_w_encoder, train_predictor
 
 parser = argparse.ArgumentParser()
 # Basic model parameters.
@@ -54,8 +53,7 @@ args = parser.parse_args()
 
 log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-    format=log_format, datefmt='%m/%d %I:%M:%S %p')
-
+                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
 '''
 MODIFY:
@@ -65,6 +63,8 @@ Get encoder_outputs and log_prob(decoder_outputs) by enc_dec func.
 Enter encoder_outputs into predictor and triain it.
 Then, get loss_1 for acc, lat.
 '''
+
+
 def controller_train(train_queue, model, optimizer):
     objs = utils.AvgrageMeter()
     mse = utils.AvgrageMeter()
@@ -79,8 +79,9 @@ def controller_train(train_queue, model, optimizer):
 
         optimizer.zero_grad()
         encoder_outputs, log_prob, archs = model.enc_dec(encoder_input, decoder_input)
-        loss_1 = train_predictor(model.predictor, input=encoder_outputs, parameters=model.encoder.parameters(),
-                                 target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
+        loss_1 = train_predictor_w_encoder(model.predictor, input=encoder_outputs,
+                                           parameters=model.encoder.parameters(),
+                                           target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
         # loss_1 = F.mse_loss(predict_value.squeeze(), predictor_target.squeeze())
 
         loss_2 = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), decoder_target.view(-1))
@@ -88,19 +89,22 @@ def controller_train(train_queue, model, optimizer):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_bound)
         optimizer.step()
-        
+
         n = encoder_input.size(0)
         objs.update(loss.data, n)
         mse.update(loss_1.data, n)
         nll.update(loss_2.data, n)
-    
+
     return objs.avg, mse.avg, nll.avg
 
+
 '''
-Modify
-controller generate_new_arch method
-return new accuracy and latency
+MODIFY:
+- Find grads on acc and latency w.r.t encoder_outputs
+- Update encoder_outputs by adding or subtracting grads
 '''
+
+
 def controller_infer(queue, model, step, direction='+'):
     new_arch_list = []
     new_predict_accs = []
@@ -119,7 +123,45 @@ def controller_infer(queue, model, step, direction='+'):
     return new_arch_list, new_predict_accs, new_predict_lats
 
 
+'''
+Modify:
+use for training only predictor
+'''
+
+
+def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, val_dst=0.2):
+    train_input = []
+    for seq in seq_input:
+        encoder_output, _ = model.encoder(seq)
+        train_input.append(encoder_output)
+
+    tot_size = len(train_input)
+    val_size = int(val_dst * tot_size)
+    train_size = tot_size - val_size
+
+    val_input = train_input[-val_size:]
+    val_acc = acc_input[-val_size:]
+    val_lat = lat_input[-val_size:]
+
+    train_input = train_input[:train_size]
+    train_acc = acc_input[:train_size]
+    train_lat = lat_input[:train_size]
+
+    predictor_train_dataset = utils.ControllerDataset(inputs=train_input, accs=train_acc, lats=train_lat, train=True)
+    predictor_train_queue = torch.utils.data.DataLoader(
+        predictor_train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+
+    predictor_val_dataset = utils.ControllerDataset(inputs=val_input, accs=val_acc, lats=val_lat, train=True)
+    predictor_val_queue = torch.utils.data.DataLoader(
+        predictor_val_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+
+    train_predictor(model, predictor_train_queue, predictor_val_queue, epochs, val_dst,
+                    batch_size=args.batch_size, lr=args.lr, l2_reg=args.l2_reg,
+                    grad_bound=args.grad_bound)
+
+
 def train_controller(model, train_input, train_acc, train_lat, epochs):
+    # train_input, train_acc, train_lat : list
     logging.info('Train data: {}'.format(len(train_input)))
     controller_train_dataset = utils.ControllerDataset(train_input, train_acc, train_lat, True)
     controller_train_queue = torch.utils.data.DataLoader(
@@ -141,9 +183,11 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             seq = utils.generate_arch(1, nasbench)[1][0]
             if seq not in random_synthetic_input and seq not in base_arch:
                 random_synthetic_input.append(seq)
-        
-        controller_synthetic_dataset = utils.ControllerDataset(random_synthetic_input, None, False)      
-        controller_synthetic_queue = torch.utils.data.DataLoader(controller_synthetic_dataset, batch_size=len(controller_synthetic_dataset), shuffle=False, pin_memory=True)
+
+        controller_synthetic_dataset = utils.ControllerDataset(random_synthetic_input, None, False)
+        controller_synthetic_queue = torch.utils.data.DataLoader(controller_synthetic_dataset,
+                                                                 batch_size=len(controller_synthetic_dataset),
+                                                                 shuffle=False, pin_memory=True)
 
         with torch.no_grad():
             model.eval()
@@ -168,20 +212,20 @@ def main():
     if not torch.cuda.is_available():
         logging.info('No GPU found!')
         sys.exit(1)
-    
+
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed(args.seed)
     cudnn.enabled = True
     cudnn.benchmark = True
-    
+
     logging.info("Args = %s", args)
 
     args.source_length = args.encoder_length = args.decoder_length = (args.nodes + 2) * (args.nodes - 1) // 2
 
     nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
-    
+
     controller = NAO(
         args.encoder_layers,
         args.decoder_layers,
@@ -198,14 +242,15 @@ def main():
     controller = controller.cuda()
 
     # ADD LATENCY LIST
-    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
+    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(
+        args.seed_arch, nasbench, need_perf=True)
 
     arch_pool = []
     seq_pool = []
     arch_pool_valid_acc = []
     arch_pool_lat = []
-    for i in range(args.iteration+1):
-        logging.info('Iteration {}'.format(i+1))
+    for i in range(args.iteration + 1):
+        logging.info('Iteration {}'.format(i + 1))
         if not child_arch_pool_valid_acc or not child_arch_pool_lat:
             for arch in child_arch_pool:
                 data = nasbench.query(arch)
@@ -225,6 +270,7 @@ def main():
         arch_pool = [arch_pool[i] for i in arch_pool_valid_acc_sorted_indices]
         seq_pool = [seq_pool[i] for i in arch_pool_valid_acc_sorted_indices]
         arch_pool_valid_acc = [arch_pool_valid_acc[i] for i in arch_pool_valid_acc_sorted_indices]
+
         with open(os.path.join(args.output_dir, 'arch_pool.{}'.format(i)), 'w') as fa:
             for arch, seq, valid_acc in zip(arch_pool, seq_pool, arch_pool_valid_acc):
                 fa.write('{}\t{}\t{}\t{}\n'.format(arch.matrix, arch.ops, seq, valid_acc))
@@ -259,7 +305,8 @@ def main():
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
         logging.info('Generate synthetic data for EPD')
-        synthetic_encoder_input, synthetic_acc_target, synthetic_lat_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
+        synthetic_encoder_input, synthetic_acc_target, synthetic_lat_target = generate_synthetic_controller_data(
+            nasbench, controller, train_encoder_input, args.random_arch)
         if args.up_sample_ratio is None:
             up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
         else:
@@ -287,16 +334,20 @@ def main():
         topk_archs = unique_input[:args.k]
 
         controller_infer_dataset = utils.ControllerDataset(topk_archs, None, False)
-        controller_infer_queue = torch.utils.data.DataLoader(controller_infer_dataset, batch_size=len(controller_infer_dataset), shuffle=False, pin_memory=True)
-        
+        controller_infer_queue = torch.utils.data.DataLoader(controller_infer_dataset,
+                                                             batch_size=len(controller_infer_dataset), shuffle=False,
+                                                             pin_memory=True)
+
         while len(new_archs) < args.new_arch:
             predict_step_size += 1
             logging.info('Generate new architectures with step size %d', predict_step_size)
-            new_seq, new_accs, new_lats = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
+            new_seq, new_accs, new_lats = controller_infer(controller_infer_queue, controller, predict_step_size,
+                                                           direction='+')
             for seq in new_seq:
                 matrix, ops = utils.convert_seq_to_arch(seq)
                 arch = api.ModelSpec(matrix=matrix, ops=ops)
-                if nasbench.is_valid(arch) and len(arch.ops) == 7 and seq not in train_encoder_input and seq not in new_seqs:
+                if nasbench.is_valid(arch) and len(
+                        arch.ops) == 7 and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
                     new_seqs.append(seq)
                 if len(new_seqs) >= args.new_arch:
