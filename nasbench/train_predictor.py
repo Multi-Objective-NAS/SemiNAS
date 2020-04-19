@@ -1,12 +1,6 @@
-from timeit import default_timer as timer
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-from tqdm import tqdm
-import losses
-import datasets
-import metrics
-import model_selector
 # from tensorboardX import SummaryWriter
 import numpy as np
 import utils

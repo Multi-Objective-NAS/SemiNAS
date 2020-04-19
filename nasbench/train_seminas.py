@@ -18,43 +18,7 @@ from controller import NAO, SiameseNAO
 from nasbench import api
 from train_predictor import train_predictor_w_encoder, train_predictor
 from multi_objective_sort import multi_objective_sort
-
-parser = argparse.ArgumentParser()
-# Basic model parameters.
-parser.add_argument('--data', type=str, default='data')
-parser.add_argument('--output_dir', type=str, default='models')
-parser.add_argument('--seed', type=int, default=1)
-parser.add_argument('--seed_arch', type=int, default=100)
-parser.add_argument('--random_arch', type=int, default=10000)
-parser.add_argument('--nodes', type=int, default=7)
-parser.add_argument('--new_arch', type=int, default=100)
-parser.add_argument('--k', type=int, default=100)
-parser.add_argument('--encoder_layers', type=int, default=1)
-parser.add_argument('--hidden_size', type=int, default=16)
-parser.add_argument('--mlp_layers', type=int, default=2)
-parser.add_argument('--mlp_hidden_size', type=int, default=64)
-parser.add_argument('--decoder_layers', type=int, default=1)
-parser.add_argument('--source_length', type=int, default=27)
-parser.add_argument('--encoder_length', type=int, default=27)
-parser.add_argument('--decoder_length', type=int, default=27)
-parser.add_argument('--dropout', type=float, default=0.1)
-parser.add_argument('--l2_reg', type=float, default=1e-4)
-parser.add_argument('--vocab_size', type=int, default=7)
-parser.add_argument('--max_step_size', type=int, default=100)
-parser.add_argument('--trade_off', type=float, default=0.8)
-parser.add_argument('--pretrain_epochs', type=int, default=10000)
-parser.add_argument('--epochs', type=int, default=1000)
-parser.add_argument('--up_sample_ratio', type=int, default=100)
-parser.add_argument('--batch_size', type=int, default=100)
-parser.add_argument('--lr', type=float, default=0.001)
-parser.add_argument('--optimizer', type=str, default='adam')
-parser.add_argument('--grad_bound', type=float, default=5.0)
-parser.add_argument('--iteration', type=float, default=2)
-args = parser.parse_args()
-
-log_format = '%(asctime)s %(message)s'
-logging.basicConfig(stream=sys.stdout, level=logging.INFO,
-                    format=log_format, datefmt='%m/%d %I:%M:%S %p')
+import easydict
 
 '''
 MODIFY:
@@ -214,6 +178,41 @@ def main():
     #if not torch.cuda.is_available():
     #    logging.info('No GPU found!')
     #    sys.exit(1)
+    args = easydict.EasyDict({
+        "data": "data",
+        "output_dir": "models",
+        "seed": 1,
+        "seed_arch": 100,
+        "random_arch": 10000,
+        "nodes": 7,
+        "new_arch": 100,
+        "k": 100,
+        "encoder_layers": 1,
+        "hidden_size": 16,
+        "mlp_layers": 2,
+        "mlp_hidden_size": 64,
+        "decoder_layers": 1,
+        "source_length": 27,
+        "encoder_length": 27,
+        "decoder_length": 27,
+        "dropout": 0.1,
+        "l2_reg": 1e-4,
+        "vocab_size": 7,
+        "max_step_size": 100,
+        "trade_off": 0.8,
+        "pretrain_epochs": 10000,
+        "epochs": 1000,
+        "up_sample_ratio": 100,
+        "batch_size": 100,
+        "lr": 0.001,
+        "optimizer": "adam",
+        "grad_bound": 5.0,
+        "iteration": 2
+    })
+
+    log_format = '%(asctime)s %(message)s'
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO,
+                        format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
     device = torch.device("cpu")
 
