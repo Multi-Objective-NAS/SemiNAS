@@ -30,7 +30,7 @@ Then, get loss_1 for acc, lat.
 '''
 
 
-def controller_train(train_queue, model, optimizer):
+def controller_train(train_queue, model, optimizer, args):
     objs = utils.AvgrageMeter()
     mse = utils.AvgrageMeter()
     nll = utils.AvgrageMeter()
@@ -94,7 +94,7 @@ use for training only predictor
 '''
 
 
-def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, val_dst=0.2):
+def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, args, val_dst=0.2):
     train_input = []
     for seq in seq_input:
         encoder_output, _ = model.encoder(seq)
@@ -125,7 +125,7 @@ def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, val_dst
                     grad_bound=args.grad_bound)
 
 
-def train_controller(model, train_input, train_acc, train_lat, epochs):
+def train_controller(model, train_input, train_acc, train_lat, epochs, args):
     # train_input, train_acc, train_lat : list
     logging.info('Train data: {}'.format(len(train_input)))
     controller_train_dataset = utils.ControllerDataset(train_input, train_acc, train_lat, True)
@@ -175,9 +175,10 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
 
 
 def main():
-    #if not torch.cuda.is_available():
+    # if not torch.cuda.is_available():
     #    logging.info('No GPU found!')
     #    sys.exit(1)
+
     args = easydict.EasyDict({
         "data": "data",
         "output_dir": "models",
@@ -303,8 +304,9 @@ def main():
 
         # Pre-train
         logging.info('Pre-train EPD')
-        #train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
-        train_only_predictor(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
+        # train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs, args)
+        train_only_predictor(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs,
+                             args)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
         logging.info('Generate synthetic data for EPD')
@@ -317,10 +319,11 @@ def main():
         all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
         all_acc_target = train_acc_target * up_sample_ratio + synthetic_acc_target
         all_lat_target = train_lat_target * up_sample_ratio + synthetic_lat_target
+
         # Train
         logging.info('Train EPD')
-        #train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
-        train_only_predictor(controller, all_encoder_input, all_acc_traget, train_lat_traget, args.epochs)
+        # train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
+        train_only_predictor(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
         logging.info('Finish training EPD')
 
         new_archs = []
