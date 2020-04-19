@@ -3,8 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch
-from controller import generate_arch_emb
 
+def generate_arch_emb(self, x):
+    x = torch.mean(x, dim=1)
+    x = F.normalize(x, 2, dim=-1)
+    arch_emb = x
+
+    return arch_emb
 
 '''
 NEED TO MODIFY:

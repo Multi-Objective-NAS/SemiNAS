@@ -14,7 +14,7 @@ import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 
 import utils
-from controller import NAO
+from controller import NAO, SiameseNAO
 from nasbench import api
 from train_predictor import train_predictor_w_encoder, train_predictor
 from multi_objective_sort import multi_objective_sort
@@ -215,6 +215,8 @@ def main():
     #    logging.info('No GPU found!')
     #    sys.exit(1)
 
+    device = torch.device("cpu")
+
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -228,7 +230,7 @@ def main():
 
     nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
 
-    controller = NAO(
+    controller = SiameseNAO(
         args.encoder_layers,
         args.decoder_layers,
         args.mlp_layers,
@@ -240,6 +242,8 @@ def main():
         args.encoder_length,
         args.decoder_length,
     )
+    controller.load_state_dict(torch.load('../data/self_trained_2.pth'), strict=True)
+
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
 
@@ -300,7 +304,8 @@ def main():
 
         # Pre-train
         logging.info('Pre-train EPD')
-        train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
+        #train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
+        train_only_predictor(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
         logging.info('Generate synthetic data for EPD')
@@ -315,7 +320,8 @@ def main():
         all_lat_target = train_lat_target * up_sample_ratio + synthetic_lat_target
         # Train
         logging.info('Train EPD')
-        train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
+        #train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs)
+        train_only_predictor(controller, all_encoder_input, all_acc_traget, train_lat_traget, args.epochs)
         logging.info('Finish training EPD')
 
         new_archs = []
