@@ -247,7 +247,21 @@ def main():
         encoder_length=args.encoder_length,
         decoder_length=args.decoder_length
     )
-    controller.load_state_dict(torch.load('../data/self_trained_2.pth'), strict=True)
+
+    # load pretrained model
+    pretrained_dict = torch.load(os.path.join(args.data, 'self_trained_2.pth'))
+
+    encoder_dict = controller.nao.encoder.state_dict()
+    decoder_dict = controller.nao.decoder.state_dict()
+    regressor_dict = controller.regressor.state_dict()
+
+    encoder_dict.update({k: v for k, v in pretrained_dict.items() if k in encoder_dict})
+    decoder_dict.update({k: v for k, v in pretrained_dict.items() if k in decoder_dict})
+    decoder_dict.update({k: v for k, v in pretrained_dict.items() if k in regressor_dict})
+
+    controller.nao.encoder.load_state_dict(encoder_dict)
+    controller.nao.decoder.load_state_dict(decoder_dict)
+    controller.regressor.load_state_dict(regressor_dict)
 
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
