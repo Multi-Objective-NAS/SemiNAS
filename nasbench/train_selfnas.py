@@ -228,13 +228,13 @@ def main():
         dropout=args.dropout,
         source_length=args.source_length,
         encoder_length=args.encoder_length,
-        decoder_length=args.decoder_length,
+        decoder_length=args.decoder_length
     )
 
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
 
-    # Self-train start
+    '''Self-train start
     _, self_seq_pool, _ = utils.generate_arch(None, nasbench, need_perf=False)
     logging.info('Self-train ED')
     selftrain_controller(controller, self_seq_pool, epochs=10)
@@ -242,7 +242,7 @@ def main():
     if args.only_self_train:
         sys.exit(0)
     controller = controller.nao
-    # Self-train end
+    Self-train end'''
 
     child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
 

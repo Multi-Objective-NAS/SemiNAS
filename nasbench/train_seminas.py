@@ -208,7 +208,12 @@ def main():
         "lr": 0.001,
         "optimizer": "adam",
         "grad_bound": 5.0,
-        "iteration": 2
+        "iteration": 2,
+        "load": False,
+        "load_iteration": 0,
+        "save": True,
+        "save_path": "./output/",
+        "iteration_save" : 1
     })
 
     log_format = '%(asctime)s %(message)s'
@@ -231,21 +236,29 @@ def main():
     nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
 
     controller = SiameseNAO(
-        args.encoder_layers,
-        args.decoder_layers,
-        args.mlp_layers,
-        args.hidden_size,
-        args.mlp_hidden_size,
-        args.vocab_size,
-        args.dropout,
-        args.source_length,
-        args.encoder_length,
-        args.decoder_length,
+        encoder_layers=args.encoder_layers,
+        decoder_layers=args.decoder_layers,
+        mlp_layers=args.mlp_layers,
+        mlp_hidden_size=args.mlp_hidden_size,
+        hidden_size=args.hidden_size,
+        vocab_size=args.vocab_size,
+        dropout=args.dropout,
+        source_length=args.source_length,
+        encoder_length=args.encoder_length,
+        decoder_length=args.decoder_length
     )
     controller.load_state_dict(torch.load('../data/self_trained_2.pth'), strict=True)
 
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
+
+    if args.load:
+        fname = args.save_path + args.fname + 'predictor_' + str(args.load_iteration) + '.dat'
+        controller.nao.predictor.load_state_dict(torch.load(fname))
+
+        print('model loaded!, lr: {}'.format(args.lr))
+    else:
+        args.load_iteration = 1
 
     # ADD LATENCY LIST
     child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(
@@ -255,7 +268,7 @@ def main():
     seq_pool = []
     arch_pool_valid_acc = []
     arch_pool_lat = []
-    for i in range(args.iteration + 1):
+    for i in range(args.load_iteration, args.iteration + 1):
         logging.info('Iteration {}'.format(i + 1))
         if not child_arch_pool_valid_acc or not child_arch_pool_lat:
             for arch in child_arch_pool:
@@ -304,14 +317,13 @@ def main():
 
         # Pre-train
         logging.info('Pre-train EPD')
-        # train_controller(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs, args)
-        train_only_predictor(controller, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs,
-                             args)
+        train_controller(controller.nao, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs, args)
+        #train_only_predictor(controller.nao, train_encoder_input, train_acc_target, train_lat_target, args.pretrain_epochs,args)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
         logging.info('Generate synthetic data for EPD')
         synthetic_encoder_input, synthetic_acc_target, synthetic_lat_target = generate_synthetic_controller_data(
-            nasbench, controller, train_encoder_input, args.random_arch)
+            nasbench, controller.nao, train_encoder_input, args.random_arch)
         if args.up_sample_ratio is None:
             up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
         else:
@@ -322,8 +334,8 @@ def main():
 
         # Train
         logging.info('Train EPD')
-        # train_controller(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
-        train_only_predictor(controller, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
+        train_controller(controller.nao, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
+        #train_only_predictor(controller.nao, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
         logging.info('Finish training EPD')
 
         new_archs = []
@@ -347,7 +359,7 @@ def main():
         while len(new_archs) < args.new_arch:
             predict_step_size += 1
             logging.info('Generate new architectures with step size %d', predict_step_size)
-            new_seq, new_accs, new_lats = controller_infer(controller_infer_queue, controller, predict_step_size,
+            new_seq, new_accs, new_lats = controller_infer(controller_infer_queue, controller.nao, predict_step_size,
                                                            direction='+')
             for seq in new_seq:
                 matrix, ops = utils.convert_seq_to_arch(seq)
@@ -367,6 +379,12 @@ def main():
         child_arch_pool_valid_acc = []
         child_arch_pool_lat = []
         logging.info("Generate %d new archs", len(child_arch_pool))
+
+        # save model checkpoint
+        if args.save:
+            if i % args.iteration_save == 0:
+                fname = args.model_save_path + args.fname + 'predictor' + str(i) + '.dat'
+                torch.save(controller.nao.predictor.state_dict(), fname)
 
     print(nasbench.get_budget_counters())
 
