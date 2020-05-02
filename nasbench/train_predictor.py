@@ -110,7 +110,7 @@ def train_predictor_w_encoder(predictor, input, parameters, target_acc, target_l
         optimizer.zero_grad()
         rep, mask = predictor.model['rep'](input, mask)
         out_t = predictor.model[t](rep)
-        loss = F.mse_loss[t](out_t, labels[t])
+        loss = F.mse_loss(out_t, labels[t])
         loss_data[t] = loss.data[0]
         loss.backward()
         grads[t] = []
@@ -139,7 +139,7 @@ def train_predictor_w_encoder(predictor, input, parameters, target_acc, target_l
     rep, _ = predictor.model['rep'](input, mask)
     for i, t in enumerate(predictor.tasks):
         out_t = predictor.model[t](rep)
-        loss_t = F.mse_loss[t](out_t, labels[t])
+        loss_t = F.mse_loss(out_t, labels[t])
         loss_data[t] = loss_t.data[0]
         if i > 0:
             loss = loss + scale[t] * loss_t
@@ -205,7 +205,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
                 optimizer.zero_grad()
                 rep, mask = predictor.model['rep'](input, mask)
                 out_t = predictor.model[t](rep)
-                loss = F.mse_loss[t](out_t, labels[t])
+                loss = F.mse_loss(out_t, labels[t])
                 loss_data[t] = loss.data[0]
                 loss.backward()
                 grads[t] = []
@@ -234,7 +234,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
             rep, _ = predictor.model['rep'](input, mask)
             for i, t in enumerate(predictor.tasks):
                 out_t = predictor.model[t](rep)
-                loss_t = F.mse_loss[t](out_t, labels[t])
+                loss_t = F.mse_loss(out_t, labels[t])
                 loss_data[t] = loss_t.data[0]
                 if i > 0:
                     loss = loss + scale[t] * loss_t
@@ -272,7 +272,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
             val_rep, _ = predictor.model['rep'](input, None)
             for t in predictor.tasks:
                 out_t_val, _ = predictor.model[t](val_rep, None)
-                loss_t = F.mse_loss[t](out_t_val, labels_val[t])
+                loss_t = F.mse_loss(out_t_val, labels_val[t])
                 tot_loss['all'] += loss_t.data[0]
                 tot_loss[t] += loss_t.data[0]
                 met[t].update(out_t_val, labels_val[t])
