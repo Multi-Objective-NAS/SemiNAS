@@ -9,7 +9,7 @@ SOS_ID = 0
 EOS_ID = 0
 
 
-def generate_arch_emb(self, x):
+def generate_arch_emb(x):
     x = torch.mean(x, dim=1)
     x = F.normalize(x, 2, dim=-1)
     arch_emb = x
@@ -43,7 +43,7 @@ class NAO(nn.Module):
             source_length,
             encoder_length,
         )
-        self.predictor = Predictor()
+        self.predictor = Predictor(hidden_size)
         self.decoder = Decoder(
             decoder_layers,
             hidden_size,

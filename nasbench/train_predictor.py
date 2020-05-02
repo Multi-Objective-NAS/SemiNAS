@@ -87,30 +87,29 @@ In train_seminas.py, I separate training step into 2 step.
  '''
 
 
-def train_predictor_w_encoder(model, input, parameters, target_acc, target_lat, optimizer):
+def train_predictor_w_encoder(predictor, input, parameters, target_acc, target_lat, optimizer):
     # parameters : encoder_outputs and model['rep'](parent model for two task)
     # Later, find grads w.r.t parameters
-    parameters += model['rep'].parameters()
+    parameters += predictor.model['rep'].parameters()
 
     model_params = []
-    for m in model:
-        model_params += model[m].parameters()
+    for m in predictor.model.keys():
+        model_params += predictor.model[m].parameters()
 
     # Scaling the loss functions based on the algorithm choice
     loss_data = {}
     grads = {}
     scale = {}
     mask = None
-    masks = {}
     labels = {}
     labels['acc'] = target_acc
     labels['lat'] = target_lat
 
-    for t in model.tasks:
+    for t in predictor.tasks:
         # Comptue gradients of each loss function wrt parameters
         optimizer.zero_grad()
-        rep, mask = model['rep'](input, mask)
-        out_t, masks[t] = model[t](rep, None)
+        rep, mask = predictor.model['rep'](input, mask)
+        out_t = predictor.model[t](rep)
         loss = F.mse_loss[t](out_t, labels[t])
         loss_data[t] = loss.data[0]
         loss.backward()
@@ -122,7 +121,7 @@ def train_predictor_w_encoder(model, input, parameters, target_acc, target_lat, 
 
     # Normalize all gradients, this is optional and not included in the paper.
     gn = gradient_normalizers(grads, loss_data, "loss+")
-    for t in model.tasks:
+    for t in predictor.tasks:
         for gr_i in range(len(grads[t])):
             grads[t][gr_i] = grads[t][gr_i] / gn[t]
 
@@ -130,16 +129,16 @@ def train_predictor_w_encoder(model, input, parameters, target_acc, target_lat, 
     # min_norm = w^2 = alpha * v1^2 + (1-alpha) * v2^2
     # sol = (alpha, 1-alpha)
     sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in model.tasks])
-    for i, t in enumerate(model.tasks):
+    for i, t in enumerate(predictor.tasks):
         scale[t] = float(sol[i])
-        model.scales[t] = 0.999 * model.scales[t] + 0.001 * scale[t]
+        predictor.scales[t] = 0.999 * predictor.scales[t] + 0.001 * scale[t]
 
     # Back-propagation
     # scale task: alpha * task1 + (1-alpha) * task2
     optimizer.zero_grad()
-    rep, _ = model['rep'](input, mask)
-    for i, t in enumerate(model.tasks):
-        out_t, _ = model[t](rep, masks[t])
+    rep, _ = predictor.model['rep'](input, mask)
+    for i, t in enumerate(predictor.tasks):
+        out_t = predictor.model[t](rep)
         loss_t = F.mse_loss[t](out_t, labels[t])
         loss_data[t] = loss_t.data[0]
         if i > 0:
@@ -159,20 +158,20 @@ train only predictor
 '''
 
 
-def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, lr, l2_reg, grad_bound):
+def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_dst, lr, l2_reg, grad_bound):
     # model: predictor
     # loss : F.nll_loss(pred, gt)
     met = {}
-    for t in model.tasks:
+    for t in predictor.tasks:
         met[t] = RunningMetric(metric_type='ACC')
     model_params = []
-    for m in model:
-        model_params += model[m].parameters
+    for m in predictor.model.keys():
+        model_params += predictor.model[m].parameters
 
     optimizer = torch.optim.Adam(model_params, lr=lr, weight_decay=l2_reg)
     # writer = SummaryWriter(
     #    log_dir='runs/{}_{}'.format(params['exp_id'], datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y")))
-    model.predictor.init_scale()
+    predictor.init_scale()
     obj_ls = {}
     n_iter = 0
 
@@ -186,8 +185,8 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
         objs = utils.AvgrageMeter()
 
         # batch train
-        for m in model:
-            model[m].train()
+        for m in predictor.model.keys():
+            predictor[m].train()
         for step, sample in enumerate(train_queue):
             n_iter += 1
             input = utils.move_to_cuda(sample['encoder_output'])
@@ -199,26 +198,25 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
             grads = {}
             scale = {}
             mask = None
-            masks = {}
             labels = {}
 
-            for t in model.tasks:
+            for t in predictor.tasks:
                 # Comptue gradients of each loss function wrt parameters
                 optimizer.zero_grad()
-                rep, mask = model['rep'](input, mask)
-                out_t, masks[t] = model[t](rep, None)
+                rep, mask = predictor.model['rep'](input, mask)
+                out_t = predictor.model[t](rep)
                 loss = F.mse_loss[t](out_t, labels[t])
                 loss_data[t] = loss.data[0]
                 loss.backward()
                 grads[t] = []
                 # Find grads of loss in task w.r.t. parameters
-                for param in model['rep'].parameters():
+                for param in predictor.model['rep'].parameters():
                     if param.grad is not None:
                         grads[t].append(Variable(param.grad.data.clone(), requires_grad=False))
 
             # Normalize all gradients, this is optional and not included in the paper.
             gn = gradient_normalizers(grads, loss_data, "loss+")
-            for t in model.tasks:
+            for t in predictor.tasks:
                 for gr_i in range(len(grads[t])):
                     grads[t][gr_i] = grads[t][gr_i] / gn[t]
 
@@ -226,16 +224,16 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
             # min_norm = w^2 = alpha * v1^2 + (1-alpha) * v2^2
             # sol = (alpha, 1-alpha)
             sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in model.tasks])
-            for i, t in enumerate(model.tasks):
+            for i, t in enumerate(predictor.tasks):
                 scale[t] = float(sol[i])
-                model.scales[t] = 0.999 * model.scales[t] + 0.001 * scale[t]
+                predictor.scales[t] = 0.999 * predictor.scales[t] + 0.001 * scale[t]
 
             # Back-propagation
             # scale task: alpha * task1 + (1-alpha) * task2
             optimizer.zero_grad()
-            rep, _ = model['rep'](input, mask)
-            for i, t in enumerate(model.tasks):
-                out_t, _ = model[t](rep, masks[t])
+            rep, _ = predictor.model['rep'](input, mask)
+            for i, t in enumerate(predictor.tasks):
+                out_t = predictor.model[t](rep)
                 loss_t = F.mse_loss[t](out_t, labels[t])
                 loss_data[t] = loss_t.data[0]
                 if i > 0:
@@ -244,23 +242,23 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
                     loss = scale[t] * loss_t
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_bound)
+            torch.nn.utils.clip_grad_norm_(predictor.parameters(), grad_bound)
             optimizer.step()
 
             objs.update(loss.data, batch_size)
             obj_ls.append(objs.avg)
 
             print('training_loss', loss.data[0], n_iter)
-            for t in model.tasks:
+            for t in predictor.tasks:
                 print('training_loss_{}'.format(t), loss_data[t], n_iter)
 
         # evaluation
-        for m in model:
-            model[m].eval()
+        for m in predictor.model.keys():
+            predictor.model[m].eval()
         tot_loss = {}
         tot_loss['all'] = 0.0
         met = {}
-        for t in model.tasks:
+        for t in predictor.tasks:
             tot_loss[t] = 0.0
             met[t] = 0.0
 
@@ -271,16 +269,16 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
             labels_val['acc'] = utils.move_to_cuda(batch_val['predictor_acc'])
             labels_val['lat'] = utils.move_to_cuda(batch_val['predictor_lat'])
 
-            val_rep, _ = model['rep'](input, None)
-            for t in model.tasks:
-                out_t_val, _ = model[t](val_rep, None)
+            val_rep, _ = predictor.model['rep'](input, None)
+            for t in predictor.tasks:
+                out_t_val, _ = predictor.model[t](val_rep, None)
                 loss_t = F.mse_loss[t](out_t_val, labels_val[t])
                 tot_loss['all'] += loss_t.data[0]
                 tot_loss[t] += loss_t.data[0]
                 met[t].update(out_t_val, labels_val[t])
             num_val_batches += 1
 
-        for t in model.tasks:
+        for t in predictor.tasks:
             print('validation_loss_{}'.format(t), tot_loss[t] / num_val_batches, n_iter)
             metric_results = met[t].get_result()
             for metric_key in metric_results:
@@ -291,11 +289,11 @@ def train_predictor(model, train_queue, val_queue, epochs, batch_size, val_dst, 
         if epoch % 3 == 0:
             # Save after every 3 epoch
             state = {'epoch': epoch + 1,
-                     'model_rep': model['rep'].state_dict(),
+                     'model_rep': predictor.model['rep'].state_dict(),
                      'optimizer_state': optimizer.state_dict()}
-            for t in model.tasks:
+            for t in predictor.tasks:
                 key_name = 'model_{}'.format(t)
-                state[key_name] = model[t].state_dict()
+                state[key_name] = predictor.model[t].state_dict()
 
             torch.save(state, "saved_models/{}_predictor.pkl".format(epoch + 1))
 

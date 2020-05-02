@@ -44,8 +44,10 @@ def controller_train(train_queue, model, optimizer, args):
 
         optimizer.zero_grad()
         encoder_outputs, log_prob, archs = model.enc_dec(encoder_input, decoder_input)
+        parameters = []
+        parameters += model.encoder.parameters()
         loss_1 = train_predictor_w_encoder(model.predictor, input=encoder_outputs,
-                                           parameters=model.encoder.parameters(),
+                                           parameters=parameters,
                                            target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
         # loss_1 = F.mse_loss(predict_value.squeeze(), predictor_target.squeeze())
 
@@ -135,7 +137,7 @@ def train_controller(model, train_input, train_acc, train_lat, epochs, args):
     model.predictor.init_scale()
 
     for epoch in range(1, epochs + 1):
-        loss, mse, ce = controller_train(controller_train_queue, model, optimizer)
+        loss, mse, ce = controller_train(controller_train_queue, model, optimizer, args)
         logging.info("epoch %04d train loss %.6f mse %.6f ce %.6f", epoch, loss, mse, ce)
 
 
@@ -181,7 +183,7 @@ def main():
 
     args = easydict.EasyDict({
         "data": "data",
-        "output_dir": "models",
+        "output_dir": '../../gdrive/My Drive/TrainOutput/models',
         "seed": 1,
         "seed_arch": 100,
         "random_arch": 10000,
@@ -189,7 +191,7 @@ def main():
         "new_arch": 100,
         "k": 100,
         "encoder_layers": 1,
-        "hidden_size": 16,
+        "hidden_size": 64,
         "mlp_layers": 2,
         "mlp_hidden_size": 64,
         "decoder_layers": 1,
@@ -200,7 +202,7 @@ def main():
         "l2_reg": 1e-4,
         "vocab_size": 7,
         "max_step_size": 100,
-        "trade_off": 0.8,
+        "trade_off": 0.6,
         "pretrain_epochs": 10000,
         "epochs": 1000,
         "up_sample_ratio": 100,
@@ -212,7 +214,7 @@ def main():
         "load": False,
         "load_iteration": 0,
         "save": True,
-        "save_path": "./output/",
+        "save_path": '../../gdrive/My Drive/TrainOutput',
         "iteration_save" : 1
     })
 
@@ -250,18 +252,11 @@ def main():
 
     # load pretrained model
     pretrained_dict = torch.load(os.path.join(args.data, 'self_trained_2.pth'))
+    controller_dict = controller.state_dict()
+    controller_dict.update({k: v for k, v in pretrained_dict.items() if k in controller_dict})
+    controller.load_state_dict(controller_dict)
 
-    encoder_dict = controller.nao.encoder.state_dict()
-    decoder_dict = controller.nao.decoder.state_dict()
-    regressor_dict = controller.regressor.state_dict()
-
-    encoder_dict.update({k: v for k, v in pretrained_dict.items() if k in encoder_dict})
-    decoder_dict.update({k: v for k, v in pretrained_dict.items() if k in decoder_dict})
-    decoder_dict.update({k: v for k, v in pretrained_dict.items() if k in regressor_dict})
-
-    controller.nao.encoder.load_state_dict(encoder_dict)
-    controller.nao.decoder.load_state_dict(decoder_dict)
-    controller.regressor.load_state_dict(regressor_dict)
+    print("Pretrained Model Loaded")
 
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
@@ -273,6 +268,8 @@ def main():
         print('model loaded!, lr: {}'.format(args.lr))
     else:
         args.load_iteration = 1
+
+    print("Start training")
 
     # ADD LATENCY LIST
     child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(
@@ -302,13 +299,14 @@ def main():
         multi_objective_sort(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat)
 
         with open(os.path.join(args.output_dir, 'arch_pool.{}'.format(i)), 'w') as fa:
-            for arch, seq, valid_acc in zip(arch_pool, seq_pool, arch_pool_valid_acc):
-                fa.write('{}\t{}\t{}\t{}\n'.format(arch.matrix, arch.ops, seq, valid_acc))
+            for arch, seq, valid_acc, lat in zip(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat):
+                fa.write('{}\t{}\t{}\t{}\t{}\n'.format(arch.matrix, arch.ops, seq, valid_acc, lat))
         for arch_index in range(10):
             print('Top 10 architectures:')
             print('Architecutre connection:{}'.format(arch_pool[arch_index].matrix))
             print('Architecture operations:{}'.format(arch_pool[arch_index].ops))
             print('Valid accuracy:{}'.format(arch_pool_valid_acc[arch_index]))
+            print('Valid latency:{}'.format(arch_pool_lat[arch_index]))
 
         if i == args.iteration:
             print('Final architectures:')
@@ -316,6 +314,7 @@ def main():
                 print('Architecutre connection:{}'.format(arch_pool[arch_index].matrix))
                 print('Architecture operations:{}'.format(arch_pool[arch_index].ops))
                 print('Valid accuracy:{}'.format(arch_pool_valid_acc[arch_index]))
+                print('Valid latency:{}'.format(arch_pool_lat[arch_index]))
                 fs, cs = nasbench.get_metrics_from_spec(arch_pool[arch_index])
                 test_acc = np.mean([cs[108][j]['final_test_accuracy'] for j in range(3)])
                 print('Mean test accuracy:{}'.format(test_acc))
@@ -348,7 +347,7 @@ def main():
 
         # Train
         logging.info('Train EPD')
-        train_controller(controller.nao, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
+        train_controller(controller.nao, all_encoder_input, all_acc_target, all_lat_target, args.epochs, args)
         #train_only_predictor(controller.nao, all_encoder_input, all_acc_target, train_lat_target, args.epochs, args)
         logging.info('Finish training EPD')
 
@@ -397,8 +396,8 @@ def main():
         # save model checkpoint
         if args.save:
             if i % args.iteration_save == 0:
-                fname = args.model_save_path + args.fname + 'predictor' + str(i) + '.dat'
-                torch.save(controller.nao.predictor.state_dict(), fname)
+                fname = args.model_save_path + args.fname + 'controller' + str(i) + '.dat'
+                torch.save(controller.state_dict(), fname)
 
     print(nasbench.get_budget_counters())
 
