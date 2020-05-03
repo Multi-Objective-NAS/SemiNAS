@@ -16,6 +16,7 @@ def generate_arch_emb(x):
 
     return arch_emb
 
+
 class NAO(nn.Module):
     def __init__(self,
                  encoder_layers,
@@ -27,7 +28,7 @@ class NAO(nn.Module):
                  dropout,
                  source_length,
                  encoder_length,
-                 decoder_length,
+                 decoder_length
                  ):
         super(NAO, self).__init__()
         '''
@@ -41,9 +42,9 @@ class NAO(nn.Module):
             vocab_size,
             dropout,
             source_length,
-            encoder_length,
+            encoder_length
         )
-        self.predictor = Predictor(hidden_size)
+        self.predictor = Predictor(encoder_length)
         self.decoder = Decoder(
             decoder_layers,
             hidden_size,

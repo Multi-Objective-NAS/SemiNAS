@@ -106,10 +106,15 @@ def train_predictor_w_encoder(predictor, input, parameters, target_acc, target_l
     labels['lat'] = target_lat
 
     for t in predictor.tasks:
-        # Comptue gradients of each loss function wrt parameters
+        # Compute gradients of each loss function wrt parameters
         optimizer.zero_grad()
+
+        #print(input.size(0), input.size(1))
         rep, mask = predictor.model['rep'](input, mask)
+        #print(rep.size(0), rep.size(1))
         out_t = predictor.model[t](rep)
+        #print(out_t.size(0), out_t.size(0))
+        #print(labels[t].size(0), labels[t].size(1))
         loss = F.mse_loss(out_t, labels[t])
         loss_data[t] = loss.data[0]
         loss.backward()

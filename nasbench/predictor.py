@@ -70,7 +70,7 @@ class Predictor(nn.Module):
         out = {}
         rep, _ = self.model['rep'](x, None)
         for t in self.tasks:
-            out[t], _ = self.model[t](rep, None)
+            out[t]= self.model[t](rep)
 
         return arch_emb, out['acc'], out['lat']
 
