@@ -44,7 +44,7 @@ class NAO(nn.Module):
             source_length,
             encoder_length
         )
-        self.predictor = Predictor(encoder_length)
+        self.predictor = Predictor(hidden_size)
         self.decoder = Decoder(
             decoder_layers,
             hidden_size,

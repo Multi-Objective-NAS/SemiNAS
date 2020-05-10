@@ -4,7 +4,7 @@ from torch.autograd import Variable
 # from tensorboardX import SummaryWriter
 import numpy as np
 import utils
-from min_norm_solvers import MinNormSolver, gradient_normalizers
+from MultiObjectiveOptimization.multi_task.min_norm_solvers import MinNormSolver, gradient_normalizers
 
 
 class RunningMetric(object):
@@ -87,65 +87,73 @@ In train_seminas.py, I separate training step into 2 step.
  '''
 
 
-def train_predictor_w_encoder(predictor, input, parameters, target_acc, target_lat, optimizer):
+def train_predictor_w_encoder_batch(nao, encoder_input, target_acc, target_lat, optimizer):
     # parameters : encoder_outputs and model['rep'](parent model for two task)
     # Later, find grads w.r.t parameters
-    parameters += predictor.model['rep'].parameters()
-
-    model_params = []
-    for m in predictor.model.keys():
-        model_params += predictor.model[m].parameters()
-
+    encoder_input = Variable(encoder_input)
+    
+    params = []
+    params += nao.encoder.parameters()
+    params += nao.predictor.model['rep'].parameters()
+    
     # Scaling the loss functions based on the algorithm choice
     loss_data = {}
     grads = {}
     scale = {}
     mask = None
     labels = {}
-    labels['acc'] = target_acc
-    labels['lat'] = target_lat
+    labels['acc'] = Variable(target_acc)
+    labels['lat'] = Variable(target_lat)
 
-    for t in predictor.tasks:
+    for t in nao.predictor.tasks:
         # Compute gradients of each loss function wrt parameters
         optimizer.zero_grad()
-
-        #print(input.size(0), input.size(1))
-        rep, mask = predictor.model['rep'](input, mask)
-        #print(rep.size(0), rep.size(1))
-        out_t = predictor.model[t](rep)
-        #print(out_t.size(0), out_t.size(0))
-        #print(labels[t].size(0), labels[t].size(1))
+        encoder_output, _ = nao.encoder(encoder_input)
+        encoder_output = torch.mean(encoder_output, dim=1)
+        encoder_output = F.normalize(encoder_output, 2, dim=-1)
+        
+        rep, mask = nao.predictor.model['rep'](encoder_output, mask)
+        out_t = nao.predictor.model[t](rep)     
+        
         loss = F.mse_loss(out_t, labels[t])
-        loss_data[t] = loss.data[0]
+        loss_data[t] = loss.item()
+        
         loss.backward()
         grads[t] = []
         # Find grads of loss in task w.r.t. parameters
-        for param in parameters:
+
+        for param in params:
             if param.grad is not None:
                 grads[t].append(Variable(param.grad.data.clone(), requires_grad=False))
-
+            
     # Normalize all gradients, this is optional and not included in the paper.
     gn = gradient_normalizers(grads, loss_data, "loss+")
-    for t in predictor.tasks:
+    for t in nao.predictor.tasks:
         for gr_i in range(len(grads[t])):
-            grads[t][gr_i] = grads[t][gr_i] / gn[t]
-
+            grads[t][gr_i] = grads[t][gr_i] / gn[t] 
+            
     # Frank-Wolfe iteration to compute scales.
     # min_norm = w^2 = alpha * v1^2 + (1-alpha) * v2^2
     # sol = (alpha, 1-alpha)
-    sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in model.tasks])
-    for i, t in enumerate(predictor.tasks):
+    sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in nao.predictor.tasks])
+    for i, t in enumerate(nao.predictor.tasks):
         scale[t] = float(sol[i])
-        predictor.scales[t] = 0.999 * predictor.scales[t] + 0.001 * scale[t]
+        nao.predictor.scales[t] = 0.999 * nao.predictor.scales[t] + 0.001 * scale[t]
 
     # Back-propagation
     # scale task: alpha * task1 + (1-alpha) * task2
     optimizer.zero_grad()
-    rep, _ = predictor.model['rep'](input, mask)
-    for i, t in enumerate(predictor.tasks):
-        out_t = predictor.model[t](rep)
+    encoder_output, _ = nao.encoder(encoder_input)
+    encoder_output = torch.mean(encoder_output, dim=1)
+    encoder_output = F.normalize(encoder_output, 2, dim=-1)
+    rep, _ = nao.predictor.model['rep'](encoder_output, mask)
+    for i, t in enumerate(nao.predictor.tasks):
+        out_t = nao.predictor.model[t](rep)
         loss_t = F.mse_loss(out_t, labels[t])
-        loss_data[t] = loss_t.data[0]
+        
+        print(t+" loss: "+str(loss_t.data))
+        
+        loss_data[t] = loss_t.data
         if i > 0:
             loss = loss + scale[t] * loss_t
         else:
@@ -211,7 +219,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
                 rep, mask = predictor.model['rep'](input, mask)
                 out_t = predictor.model[t](rep)
                 loss = F.mse_loss(out_t, labels[t])
-                loss_data[t] = loss.data[0]
+                loss_data[t] = loss.data
                 loss.backward()
                 grads[t] = []
                 # Find grads of loss in task w.r.t. parameters
@@ -240,7 +248,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
             for i, t in enumerate(predictor.tasks):
                 out_t = predictor.model[t](rep)
                 loss_t = F.mse_loss(out_t, labels[t])
-                loss_data[t] = loss_t.data[0]
+                loss_data[t] = loss_t.data
                 if i > 0:
                     loss = loss + scale[t] * loss_t
                 else:
@@ -253,7 +261,7 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
             objs.update(loss.data, batch_size)
             obj_ls.append(objs.avg)
 
-            print('training_loss', loss.data[0], n_iter)
+            print('training_loss', loss.data, n_iter)
             for t in predictor.tasks:
                 print('training_loss_{}'.format(t), loss_data[t], n_iter)
 
@@ -278,8 +286,8 @@ def train_predictor(predictor, train_queue, val_queue, epochs, batch_size, val_d
             for t in predictor.tasks:
                 out_t_val, _ = predictor.model[t](val_rep, None)
                 loss_t = F.mse_loss(out_t_val, labels_val[t])
-                tot_loss['all'] += loss_t.data[0]
-                tot_loss[t] += loss_t.data[0]
+                tot_loss['all'] += loss_t.data
+                tot_loss[t] += loss_t.data
                 met[t].update(out_t_val, labels_val[t])
             num_val_batches += 1
 

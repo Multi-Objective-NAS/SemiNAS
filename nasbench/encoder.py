@@ -9,13 +9,6 @@ import torch.nn.functional as F
 MODIFY:
 Encoder was encoding + predictor.
 I separated encoder model( encoding ) + arch_emb function + predictor model
-
-encoder_layers,
-            hidden_size,
-            vocab_size,
-            dropout,
-            source_length,
-            encoder_length
 '''
 class Encoder(nn.Module):
     def __init__(self,

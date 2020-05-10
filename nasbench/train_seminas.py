@@ -16,9 +16,10 @@ import torch.backends.cudnn as cudnn
 import utils
 from controller import NAO, SiameseNAO
 from nasbench import api
-from train_predictor import train_predictor_w_encoder, train_predictor
+from train_predictor import train_predictor_w_encoder_batch, train_predictor
 from multi_objective_sort import multi_objective_sort
 import easydict
+from livelossplot import PlotLosses
 
 '''
 MODIFY:
@@ -30,7 +31,7 @@ Then, get loss_1 for acc, lat.
 '''
 
 
-def controller_train(train_queue, model, optimizer, args):
+def controller_train(train_queue, model, optimizer, args, epoch):
     objs = utils.AvgrageMeter()
     mse = utils.AvgrageMeter()
     nll = utils.AvgrageMeter()
@@ -42,16 +43,18 @@ def controller_train(train_queue, model, optimizer, args):
         decoder_input = utils.move_to_cuda(sample['decoder_input'])
         decoder_target = utils.move_to_cuda(sample['decoder_target'])
 
+        # (100, 27)
+        #print("encoder_inputs: ", encoder_input.size())
+        # (100, 27,64)
+        #print("encoder_outputs: ",encoder_outputs.size())
+        
+        loss_1 = train_predictor_w_encoder_batch(model, encoder_input=encoder_input,target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
+        # loss_1 = F.mse_loss(predict_value.squeeze(), predictor_target.squeeze())
+        
         optimizer.zero_grad()
         encoder_outputs, log_prob, archs = model.enc_dec(encoder_input, decoder_input)
-        parameters = []
-        parameters += model.encoder.parameters()
-        loss_1 = train_predictor_w_encoder(model.predictor, input=encoder_outputs,
-                                           parameters=parameters,
-                                           target_acc=predictor_acc, target_lat=predictor_lat, optimizer=optimizer)
-        # loss_1 = F.mse_loss(predict_value.squeeze(), predictor_target.squeeze())
-
         loss_2 = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), decoder_target.view(-1))
+        
         loss = args.trade_off * loss_1 + (1 - args.trade_off) * loss_2
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_bound)
@@ -130,15 +133,23 @@ def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, args, v
 def train_controller(model, train_input, train_acc, train_lat, epochs, args):
     # train_input, train_acc, train_lat : list
     logging.info('Train data: {}'.format(len(train_input)))
+    liveloss = PlotLosses()
+    
     controller_train_dataset = utils.ControllerDataset(train_input, train_acc, train_lat, True)
     controller_train_queue = torch.utils.data.DataLoader(
         controller_train_dataset, batch_size=args.batch_size, shuffle=True, pin_memory=True)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_reg)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.l2_reg)    
     model.predictor.init_scale()
-
+    
+    logs = {}
     for epoch in range(1, epochs + 1):
-        loss, mse, ce = controller_train(controller_train_queue, model, optimizer, args)
+        loss, mse, ce = controller_train(controller_train_queue, model, optimizer, args, epoch)
         logging.info("epoch %04d train loss %.6f mse %.6f ce %.6f", epoch, loss, mse, ce)
+        
+        logs['ACC & Lat Loss'] = mse
+        logs['Reconstruction Loss'] = ce
+        liveloss.update(logs)
+        liveloss.send()
 
 
 def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_arch=0, direction='+'):
@@ -176,14 +187,14 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
     return synthetic_input, synthetic_acc, synthetic_lat
 
 
-def main():
+def main(nasbench=None):
     # if not torch.cuda.is_available():
     #    logging.info('No GPU found!')
     #    sys.exit(1)
 
     args = easydict.EasyDict({
         "data": "data",
-        "output_dir": '../../gdrive/My Drive/TrainOutput/models',
+        "output_dir": './Output/',
         "seed": 1,
         "seed_arch": 100,
         "random_arch": 10000,
@@ -214,7 +225,7 @@ def main():
         "load": False,
         "load_iteration": 0,
         "save": True,
-        "save_path": '../../gdrive/My Drive/TrainOutput',
+        "save_path": './Output/Models/',
         "iteration_save" : 1
     })
 
@@ -222,7 +233,7 @@ def main():
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                         format=log_format, datefmt='%m/%d %I:%M:%S %p')
 
-    device = torch.device("cpu")
+    device = torch.device('cuda')
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -235,7 +246,8 @@ def main():
 
     args.source_length = args.encoder_length = args.decoder_length = (args.nodes + 2) * (args.nodes - 1) // 2
 
-    nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
+    if nasbench is None:
+        nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
 
     controller = SiameseNAO(
         encoder_layers=args.encoder_layers,

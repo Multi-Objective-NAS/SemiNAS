@@ -21,11 +21,13 @@ class MultiLeNetR(nn.Module):
         self.fc = nn.Linear(input_size, input_size)
 
     def forward(self, x, mask):
+        residual = x
         x = F.relu(self.fc(x))
         if mask is None:
             mask = Variable(torch.bernoulli(x.data.new(x.data.size()).fill_(0.5)))
         if self.training:
             x = x * mask
+        x = (residual + x) * math.sqrt(0.5)
         return x, mask
 
 
@@ -35,11 +37,14 @@ class MultiLeNetO(nn.Module):
         super(MultiLeNetO, self).__init__()
         self.fc1 = nn.Linear(input_size, input_size)
         self.fc2 = nn.Linear(input_size, 1)
+        self.prelu = nn.PReLU()
 
     def forward(self, x):
+        residual = x
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
+        x = (residual + x) * math.sqrt(0.5)
+        out = self.prelu(self.fc2(x))
+        return out
 
 
 '''
@@ -67,6 +72,7 @@ class Predictor(nn.Module):
     def forward(self, x):
         # x : encoder_outputs
         arch_emb = generate_arch_emb(x)
+        x = arch_emb
         out = {}
         rep, _ = self.model['rep'](x, None)
         for t in self.tasks:
