@@ -151,8 +151,6 @@ def train_predictor_w_encoder_batch(nao, encoder_input, target_acc, target_lat, 
         out_t = nao.predictor.model[t](rep)
         loss_t = F.mse_loss(out_t, labels[t])
         
-        print(t+" loss: "+str(loss_t.data))
-        
         loss_data[t] = loss_t.data
         if i > 0:
             loss = loss + scale[t] * loss_t

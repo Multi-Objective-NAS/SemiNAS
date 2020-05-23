@@ -20,6 +20,7 @@ from train_predictor import train_predictor_w_encoder_batch, train_predictor
 from multi_objective_sort import multi_objective_sort
 import easydict
 from livelossplot import PlotLosses
+from ipywidgets import Output
 
 '''
 MODIFY:
@@ -133,6 +134,9 @@ def train_only_predictor(model, seq_input, acc_input, lat_input, epochs, args, v
 def train_controller(model, train_input, train_acc, train_lat, epochs, args):
     # train_input, train_acc, train_lat : list
     logging.info('Train data: {}'.format(len(train_input)))
+    OUTPUT_CONTEXT = Output()
+    display(OUTPUT_CONTEXT)
+    
     liveloss = PlotLosses()
     
     controller_train_dataset = utils.ControllerDataset(train_input, train_acc, train_lat, True)
@@ -149,7 +153,8 @@ def train_controller(model, train_input, train_acc, train_lat, epochs, args):
         logs['ACC & Lat Loss'] = mse
         logs['Reconstruction Loss'] = ce
         liveloss.update(logs)
-        liveloss.send()
+        with OUTPUT_CONTEXT:
+            liveloss.draw()
 
 
 def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_arch=0, direction='+'):
@@ -162,7 +167,7 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             if seq not in random_synthetic_input and seq not in base_arch:
                 random_synthetic_input.append(seq)
 
-        controller_synthetic_dataset = utils.ControllerDataset(random_synthetic_input, None, False)
+        controller_synthetic_dataset = utils.ControllerDataset(random_synthetic_input, None, None, False)
         controller_synthetic_queue = torch.utils.data.DataLoader(controller_synthetic_dataset,
                                                                  batch_size=len(controller_synthetic_dataset),
                                                                  shuffle=False, pin_memory=True)
@@ -196,11 +201,11 @@ def main(nasbench=None):
         "data": "data",
         "output_dir": './Output/',
         "seed": 1,
-        "seed_arch": 100,
-        "random_arch": 10000,
+        "seed_arch": 20,
+        "random_arch": 20,
         "nodes": 7,
-        "new_arch": 100,
-        "k": 100,
+        "new_arch": 20,
+        "k": 10,
         "encoder_layers": 1,
         "hidden_size": 64,
         "mlp_layers": 2,
@@ -216,8 +221,8 @@ def main(nasbench=None):
         "trade_off": 0.6,
         "pretrain_epochs": 10000,
         "epochs": 1000,
-        "up_sample_ratio": 100,
-        "batch_size": 100,
+        "up_sample_ratio": 10,
+        "batch_size": 10,
         "lr": 0.001,
         "optimizer": "adam",
         "grad_bound": 5.0,
@@ -226,9 +231,11 @@ def main(nasbench=None):
         "load_iteration": 0,
         "save": True,
         "save_path": './Output/Models/',
+        "fname":'_save_model_',
         "iteration_save" : 1
     })
-
+    # "pretrain_epochs": 10000, "epochs": 1000
+    
     log_format = '%(asctime)s %(message)s'
     logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                         format=log_format, datefmt='%m/%d %I:%M:%S %p')
@@ -279,10 +286,10 @@ def main(nasbench=None):
 
         print('model loaded!, lr: {}'.format(args.lr))
     else:
-        args.load_iteration = 1
+        args.load_iteration = 0
 
     print("Start training")
-
+    
     # ADD LATENCY LIST
     child_arch_pool, child_seq_pool, child_arch_pool_valid_acc, child_arch_pool_lat = utils.generate_arch(
         args.seed_arch, nasbench, need_perf=True)
@@ -291,13 +298,16 @@ def main(nasbench=None):
     seq_pool = []
     arch_pool_valid_acc = []
     arch_pool_lat = []
-    for i in range(args.load_iteration, args.iteration + 1):
-        logging.info('Iteration {}'.format(i + 1))
+    for iter in range(args.load_iteration, args.iteration + 1):
+        logging.info('Iteration {}'.format(iter + 1))
         if not child_arch_pool_valid_acc or not child_arch_pool_lat:
             for arch in child_arch_pool:
                 data = nasbench.query(arch)
                 child_arch_pool_valid_acc.append(data['validation_accuracy'])
                 child_arch_pool_lat.append(data['training_time'])
+                
+                print("New Architectures:")
+                print(data['validation_accuracy'], data['training_time'])
 
         arch_pool += child_arch_pool
         arch_pool_valid_acc += child_arch_pool_valid_acc
@@ -308,11 +318,18 @@ def main(nasbench=None):
         MODIFY:
         - pareto sorting
         '''
-        multi_objective_sort(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat)
+        arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat = multi_objective_sort(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat)
+        
+        # Save Pool
+        if iter == args.iteration:
+            fname = 'arch_pool_final'
+        else:
+            fname = 'arch_pool_{}'.format(iter)
+        
+        matrices = np.array([arch.matrix for arch in arch_pool])
+        ops = np.array([arch.ops for arch in arch_pool])
+        np.savez(os.path.join(args.output_dir, fname), matrices=matrices, ops=ops, accs=np.array(arch_pool_valid_acc), lats=np.array(arch_pool_lat))
 
-        with open(os.path.join(args.output_dir, 'arch_pool.{}'.format(i)), 'w') as fa:
-            for arch, seq, valid_acc, lat in zip(arch_pool, seq_pool, arch_pool_valid_acc, arch_pool_lat):
-                fa.write('{}\t{}\t{}\t{}\t{}\n'.format(arch.matrix, arch.ops, seq, valid_acc, lat))
         for arch_index in range(10):
             print('Top 10 architectures:')
             print('Architecutre connection:{}'.format(arch_pool[arch_index].matrix))
@@ -320,8 +337,8 @@ def main(nasbench=None):
             print('Valid accuracy:{}'.format(arch_pool_valid_acc[arch_index]))
             print('Valid latency:{}'.format(arch_pool_lat[arch_index]))
 
-        if i == args.iteration:
-            print('Final architectures:')
+        if iter == args.iteration:
+            print('Final architectures:')            
             for arch_index in range(10):
                 print('Architecutre connection:{}'.format(arch_pool[arch_index].matrix))
                 print('Architecture operations:{}'.format(arch_pool[arch_index].ops))
@@ -373,10 +390,11 @@ def main(nasbench=None):
         MODIFY:
         - pareto sorting
         '''
-        multi_objective_sort(unique_input, unique_input, unique_acc, unique_lat)
+        _, unique_input, unique_acc, unique_lat = multi_objective_sort(unique_input, unique_input, unique_acc, unique_lat)
+        
         topk_archs = unique_input[:args.k]
 
-        controller_infer_dataset = utils.ControllerDataset(topk_archs, None, False)
+        controller_infer_dataset = utils.ControllerDataset(topk_archs, None, None, False)
         controller_infer_queue = torch.utils.data.DataLoader(controller_infer_dataset,
                                                              batch_size=len(controller_infer_dataset), shuffle=False,
                                                              pin_memory=True)
@@ -389,6 +407,7 @@ def main(nasbench=None):
             for seq in new_seq:
                 matrix, ops = utils.convert_seq_to_arch(seq)
                 arch = api.ModelSpec(matrix=matrix, ops=ops)
+                
                 if nasbench.is_valid(arch) and len(
                         arch.ops) == 7 and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
@@ -407,9 +426,10 @@ def main(nasbench=None):
 
         # save model checkpoint
         if args.save:
-            if i % args.iteration_save == 0:
-                fname = args.model_save_path + args.fname + 'controller' + str(i) + '.dat'
+            if iter % args.iteration_save == 0:
+                fname = args.save_path + args.fname + 'controller' + str(iter) + '.dat'
                 torch.save(controller.state_dict(), fname)
+                logging.info("save Model")
 
     print(nasbench.get_budget_counters())
 

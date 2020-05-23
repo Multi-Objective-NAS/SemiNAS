@@ -91,9 +91,31 @@ class NAO(nn.Module):
     '''
     def generate_new_arch(self, input_variable, predict_lambda=1, direction='-'):
         encoder_outputs, encoder_hidden = self.encoder(input_variable)
-        predict_acc, predict_lat, new_encoder_outputs, new_arch_emb, new_predict_acc, new_predict_lat = self.predictor.infer(encoder_outputs)
+        arch_emb, predict_acc, predict_lat = self.predictor.forward(encoder_outputs)
+
+        # -----------------------------------------------------------------------------------------
+        # code used grads on accuracy function w.r.t. encoder_outputs
+        # Not grads on loss function w.r.t. encoder_outputs
+        acc_grads_on_outputs = torch.autograd.grad(predict_acc, encoder_outputs, torch.ones_like(predict_acc), retain_graph=True)[0]
+        
+        lat_grads_on_outputs = torch.autograd.grad(predict_lat, encoder_outputs, torch.ones_like(predict_lat), retain_graph=True)[0]
+        
+        grads_on_outputs = (self.predictor.scales["acc"]*acc_grads_on_outputs + self.predictor.scales["lat"]*lat_grads_on_outputs)
+
+        if direction == '+':
+            new_encoder_outputs = encoder_outputs + predict_lambda * grads_on_outputs
+        elif direction == '-':
+            new_encoder_outputs = encoder_outputs - predict_lambda * grads_on_outputs
+        else:
+            raise ValueError('Direction must be + or -, got {} instead'.format(direction))
+        # -----------------------------------------------------------------------------------------
+
+        new_encoder_outputs = F.normalize(new_encoder_outputs, 2, dim=-1)
+        
+        new_arch_emb, new_predict_acc, new_predict_lat = self.predictor.forward(new_encoder_outputs)
         new_encoder_hidden = (new_arch_emb.unsqueeze(0), new_arch_emb.unsqueeze(0))
         decoder_outputs, new_archs = self.decoder(None, new_encoder_hidden, new_encoder_outputs)
+        
         return new_archs, new_predict_acc, new_predict_lat
 
 

@@ -33,17 +33,20 @@ class MultiLeNetR(nn.Module):
 
 
 class MultiLeNetO(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, activation_opt):
         super(MultiLeNetO, self).__init__()
         self.fc1 = nn.Linear(input_size, input_size)
         self.fc2 = nn.Linear(input_size, 1)
-        self.prelu = nn.PReLU()
+        if activation_opt == 'sigmoid':
+            self.act = nn.Sigmoid()
+        else:
+            self.act = nn.PReLU()
 
     def forward(self, x):
         residual = x
         x = F.relu(self.fc1(x))
         x = (residual + x) * math.sqrt(0.5)
-        out = self.prelu(self.fc2(x))
+        out = self.act(self.fc2(x))
         return out
 
 
@@ -60,8 +63,8 @@ class Predictor(nn.Module):
         model = {}
         model['rep'] = MultiLeNetR(input_size)
         self.tasks = ['acc', 'lat']
-        for t in self.tasks:
-            model[t] = MultiLeNetO(input_size)
+        model['acc'] = MultiLeNetO(input_size, 'sigmoid')
+        model['lat'] = MultiLeNetO(input_size, 'relu')
         self.model = nn.ModuleDict(model)
         self.scales = {}
 
@@ -90,41 +93,18 @@ class Predictor(nn.Module):
     '''
     def infer(self, x, predict_lambda=1, direction='-'):
         # x : encoder_outputs
-        '''
-        --------------------------------------------------------------------------------------------------
-        1)  Encoder     = seq -> encoder_outputs -> arch_emb
-            Predictor   = arch_emb -> acc, latency
-            then, grads on arch_emb
-        2)  Encoder     = seq -> encoder_outputs
-            Predictor   = encoder_outputs -> arch_emb -> acc, latency
-            then, grads on encoder_outputs
-
-        I chose 1 then,
-
-        grads_on_arch_emb = torch.autograd.grad(predict_value, x, torch.ones_like(predict_value))[0]
-        if direction == '+':
-            new_arch_emb = x + predict_lambda * grads_on_arch_emb
-        elif direction == '-':
-            new_arch_emb = x - predict_lambda * grads_on_arch_emb
-        else:
-            raise ValueError('Direction must be + or -, got {} instead'.format(direction))
-
-        new_arch_emb = F.normalize(new_arch_emb, 2, dim=-1)
-        new_predict_value = self.forward_predictor(new_arch_emb)
-
-        return predict_value, new_arch_emb, new_arch_emb, new_predict_value
-        --------------------------------------------------------------------------------------------------
-        '''
         encoder_outputs = x
         arch_emb, predict_acc, predict_lat = self.forward(x)
 
         # -----------------------------------------------------------------------------------------
         # code used grads on accuracy function w.r.t. encoder_outputs
         # Not grads on loss function w.r.t. encoder_outputs
-        acc_grads_on_outputs = torch.autograd.grad(predict_acc, encoder_outputs, torch.ones_like(predict_acc))[0]
-        lat_grads_on_outputs = torch.autograd.grad(predict_lat, encoder_outputs, torch.ones_like(predict_lat))[0]
+        acc_grads_on_outputs = torch.autograd.grad(predict_acc, encoder_outputs, torch.ones_like(predict_acc), retain_graph=True)[0]
+        print(acc_grads_on_outputs)
+        lat_grads_on_outputs = torch.autograd.grad(predict_lat, encoder_outputs, torch.ones_like(predict_lat), retain_graph=True)[0]
+        print(acc_grads_on_outputs)
         grads_on_outputs = self.scales["acc"]*acc_grads_on_outputs + self.scales["lat"]*lat_grads_on_outputs
-
+        
         if direction == '+':
             new_encoder_outputs = encoder_outputs + predict_lambda * grads_on_outputs
         elif direction == '-':
