@@ -39,7 +39,7 @@ class AvgrageMeter(object):
         self.avg = self.sum / self.cnt
 
 
-def generate_arch(n, nasbench, need_perf=False):
+def generate_arch(n, nasbench, args, need_perf=False):
     count = 0
     archs = []
     seqs = []
@@ -47,18 +47,12 @@ def generate_arch(n, nasbench, need_perf=False):
     all_keys = list(nasbench.hash_iterator())
     np.random.shuffle(all_keys)
     for key in all_keys:
-        fixed_stat, computed_stat = nasbench.get_metrics_from_hash(key)
-        if len(fixed_stat['module_operations']) < 7:
-            continue
-        arch = api.ModelSpec(
-            matrix=fixed_stat['module_adjacency'],
-            ops=fixed_stat['module_operations'],
-        )
-        if need_perf:
-            data = nasbench.query(arch)
-            if data['validation_accuracy'] < 0.9:
+        arch = get_model_spec_by_hash(key)
+		if need_perf:
+            val_acc = query_option(arch, dataset=args.dataset, option='valid')
+            if val_acc < 0.9:
                 continue
-            valid_accs.append(data['validation_accuracy'])
+            valid_accs.append(val_acc)
         archs.append(arch)
         seqs.append(convert_arch_to_seq(arch.matrix, arch.ops))
         count += 1
@@ -107,26 +101,26 @@ class ControllerDataset(torch.utils.data.Dataset):
         return len(self.inputs)
 
 
-def convert_arch_to_seq(matrix, ops):
+def convert_arch_to_seq(arch):
     seq = []
+	matrix = arch.matrix
+	ops = arch.ops
+	search_space = arch.search_space
     n = len(matrix)
     assert n == len(ops)
+	
     for col in range(1, n):
         for row in range(col):
             seq.append(matrix[row][col]+1)
-        if ops[col] == CONV1X1:
-            seq.append(3)
-        elif ops[col] == CONV3X3:
-            seq.append(4)
-        elif ops[col] == MAXPOOL3X3:
-            seq.append(5)
-        if ops[col] == OUTPUT:
-            seq.append(6)
+		if ops[col] != 'input':
+			seq.append(search_space.index(ops[col]) + 2)
+
     assert len(seq) == (n+2)*(n-1)/2
     return seq
 
 
-def convert_seq_to_arch(seq):
+def convert_seq_to_arch(seq, nasbench_api):
+	search_space = nasbench_api.search_space
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))
     matrix = [[0 for _ in range(n)] for _ in range(n)]
     ops = [INPUT]
@@ -134,20 +128,14 @@ def convert_seq_to_arch(seq):
         offset=(i+3)*i//2
         for j in range(i+1):
             matrix[j][i+1] = seq[offset+j] - 1
-        if seq[offset+i+1] == 3:
-            op = CONV1X1
-        elif seq[offset+i+1] == 4:
-            op = CONV3X3
-        elif seq[offset+i+1] == 5:
-            op = MAXPOOL3X3
-        elif seq[offset+i+1] == 6:
-            op = OUTPUT
+		idx = seq[offset+i+1] - 2
+		op = search_space[idx]
         ops.append(op)
-    return matrix, ops
+		
+    return nasbench_api.get_modelspec(matrix, ops)
 
 
 def move_to_cuda(tensor):
     if torch.cuda.is_available():
         return tensor.cuda()
     return tensor
-
