@@ -267,7 +267,7 @@ def main():
             new_seq, new_perfs = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
             for seq in new_seq:
                 arch = utils.convert_seq_to_arch(seq)
-                if nasbench.valid_spec(arch) and seq not in train_encoder_input and seq not in new_seqs:
+                if !arch and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
                     new_seqs.append(seq)
                 if len(new_seqs) >= args.new_arch:
