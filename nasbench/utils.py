@@ -48,7 +48,7 @@ def generate_arch(n, nasbench, args, need_perf=False):
     np.random.shuffle(all_keys)
     for key in all_keys:
         arch = get_model_spec_by_hash(key)
-		if need_perf:
+        if need_perf:
             val_acc = query_option(arch, dataset=args.dataset, option='valid')
             if val_acc < 0.9:
                 continue
@@ -101,28 +101,24 @@ class ControllerDataset(torch.utils.data.Dataset):
         return len(self.inputs)
 
 
-def convert_arch_to_seq(arch):
+def convert_arch_to_seq(matrix, ops, search_space):
     seq = []
-	matrix = arch.matrix
-	ops = arch.ops
-	search_space = arch.search_space
     n = len(matrix)
     assert n == len(ops)
-	
+    
     for col in range(1, n):
         for row in range(col):
             seq.append(matrix[row][col]+1)
         if ops[col] == 'output':
             seq.append(len(search_space) + 3)
-		elif ops[col] != 'input':
-			seq.append(search_space.index(ops[col]) + 3)
+        elif ops[col] != 'input':
+            seq.append(search_space.index(ops[col]) + 3)
 
     assert len(seq) == (n+2)*(n-1)/2
     return seq
 
 
-def convert_seq_to_arch(seq, nasbench_api):
-	search_space = nasbench_api.search_space
+def convert_seq_to_arch(seq, search_space):
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))
     matrix = [[0 for _ in range(n)] for _ in range(n)]
     ops = ['input']
@@ -130,14 +126,14 @@ def convert_seq_to_arch(seq, nasbench_api):
         offset=(i+3)*i//2
         for j in range(i+1):
             matrix[j][i+1] = seq[offset+j] - 1
-		idx = seq[offset+i+1] - 3
+        idx = seq[offset+i+1] - 3
         if idx == len(search_space):
             op = 'output'
         else:
             op = search_space[idx]
         ops.append(op)
-		
-    return nasbench_api.get_modelspec(matrix, ops)
+
+    return matrix, ops
 
 
 def move_to_cuda(tensor):
