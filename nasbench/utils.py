@@ -39,7 +39,7 @@ class AvgrageMeter(object):
         self.avg = self.sum / self.cnt
 
 
-def generate_arch(n, nasbench, args, need_perf=False):
+def generate_arch(n, nasbench, need_perf=False):
     count = 0
     archs = []
     seqs = []
@@ -47,18 +47,23 @@ def generate_arch(n, nasbench, args, need_perf=False):
     all_keys = list(nasbench.hash_iterator())
     np.random.shuffle(all_keys)
     for key in all_keys:
-        arch = get_model_spec_by_hash(key)
+        fixed_stat, computed_stat = nasbench.get_metrics_from_hash(key)
+        if len(fixed_stat['module_operations']) < 7:
+            continue
+        arch = api.ModelSpec(
+            matrix=fixed_stat['module_adjacency'],
+            ops=fixed_stat['module_operations'],
+        )
         if need_perf:
-            val_acc = query_option(arch, dataset=args.dataset, option='valid')
-            if val_acc < 0.9:
+            data = nasbench.query(arch)
+            if data['validation_accuracy'] < 0.9:
                 continue
-            valid_accs.append(val_acc)
+            valid_accs.append(data['validation_accuracy'])
         archs.append(arch)
         seqs.append(convert_arch_to_seq(arch.matrix, arch.ops))
         count += 1
         if count >= n:
             return archs, seqs, valid_accs
-
 
 def count_parameters(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters())
