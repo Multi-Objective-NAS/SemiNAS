@@ -5,9 +5,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from encoder import Encoder
-from decoder import Decoder
-import utils
+from .encoder import Encoder
+from .decoder import Decoder
+from . import utils
 
 
 SOS_ID = 0
