@@ -1,10 +1,8 @@
 import os
 import sys
 import glob
-import csv
 import time
 import copy
-import pathlib
 import logging
 import argparse
 import random
@@ -15,18 +13,13 @@ import torch.utils
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 
-sys.path.append('./../../libs/nasbench')
-
-from . import utils
-from .controller import NAO
+import utils
+from controller import NAO
 from nasbench import api
-from nas_201_api import NASBench201API as API
 
 
 parser = argparse.ArgumentParser()
 # Basic model parameters.
-parser.add_argument('--semisupervised', type=bool, default=True)
-parser.add_argument('--dataset', type=str, default='cifar10-valid')
 parser.add_argument('--data', type=str, default='data')
 parser.add_argument('--output_dir', type=str, default='models')
 parser.add_argument('--seed', type=int, default=1)
@@ -119,7 +112,7 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
     random_synthetic_target = []
     if random_arch > 0:
         while len(random_synthetic_input) < random_arch:
-            seq = utils.generate_arch(1, nasbench, args)[1][0]
+            seq = utils.generate_arch(1, nasbench)[1][0]
             if seq not in random_synthetic_input and seq not in base_arch:
                 random_synthetic_input.append(seq)
         
@@ -155,13 +148,8 @@ def main():
 
     args.source_length = args.encoder_length = args.decoder_length = (args.nodes + 2) * (args.nodes - 1) // 2
 
-    nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord')) # nasbench 101
-	# nasbench = API(os.path.join(args.data,'NAS-Bench-201-v1_1-096897.pth')) # nasbench 201
-
-    pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    history_writer = csv.DictWriter(open(os.path.join(args.output_dir, 'history.csv'), 'w'), fieldnames=['total_time', 'total_epoch', 'valid_accuracy', 'arch_matrix', 'arch_ops'])
-    history_writer.writeheader()
-
+    nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
+    
     controller = NAO(
         args.encoder_layers,
         args.decoder_layers,
@@ -177,7 +165,7 @@ def main():
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
 
-    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, args, need_perf=False)
+    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
 
     arch_pool = []
     seq_pool = []
@@ -186,17 +174,8 @@ def main():
         logging.info('Iteration {}'.format(i+1))
         if not child_arch_pool_valid_acc:
             for arch in child_arch_pool:
-                val_acc = query_option(arch, dataset=args.dataset, option='valid')
-                child_arch_pool_valid_acc.append(val_acc)
-
-                tot_time, tot_epoch = nasbench.get_budget_counters()
-                history_writer.writerow({
-                    'total_time': tot_time,
-                    'total_epoch': tot_epoch,
-                    'valid_accuracy': data['validation_accuracy'],
-                    'arch_matrix': arch.matrix,
-                    'arch_ops': arch.ops,
-                })
+                data = nasbench.query(arch)
+                child_arch_pool_valid_acc.append(data['validation_accuracy'])
 
         arch_pool += child_arch_pool
         arch_pool_valid_acc += child_arch_pool_valid_acc
@@ -221,7 +200,8 @@ def main():
                 print('Architecutre connection:{}'.format(arch_pool[arch_index].matrix))
                 print('Architecture operations:{}'.format(arch_pool[arch_index].ops))
                 print('Valid accuracy:{}'.format(arch_pool_valid_acc[arch_index]))
-                test_acc = query_option(arch_pool[arch_index], dataset=args.dataset, option='test')
+                fs, cs = nasbench.get_metrics_from_spec(arch_pool[arch_index])
+                test_acc = np.mean([cs[108][j]['final_test_accuracy'] for j in range(3)])
                 print('Mean test accuracy:{}'.format(test_acc))
             break
 
@@ -235,15 +215,14 @@ def main():
         train_controller(controller, train_encoder_input, train_encoder_target, args.pretrain_epochs)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
-        if args.semisupervised:
-            logging.info('Generate synthetic data for EPD')
-            synthetic_encoder_input, synthetic_encoder_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
-            if args.up_sample_ratio is None:
-                up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
-            else:
-                up_sample_ratio = args.up_sample_ratio
-            all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
-            all_encoder_target = train_encoder_target * up_sample_ratio + synthetic_encoder_target
+        logging.info('Generate synthetic data for EPD')
+        synthetic_encoder_input, synthetic_encoder_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
+        if args.up_sample_ratio is None:
+            up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
+        else:
+            up_sample_ratio = args.up_sample_ratio
+        all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
+        all_encoder_target = train_encoder_target * up_sample_ratio + synthetic_encoder_target
         # Train
         logging.info('Train EPD')
         train_controller(controller, all_encoder_input, all_encoder_target, args.epochs)
@@ -266,8 +245,9 @@ def main():
             logging.info('Generate new architectures with step size %d', predict_step_size)
             new_seq, new_perfs = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
             for seq in new_seq:
-                arch = utils.convert_seq_to_arch(seq)
-                if arch and seq not in train_encoder_input and seq not in new_seqs:
+                matrix, ops = utils.convert_seq_to_arch(seq)
+                arch = api.ModelSpec(matrix=matrix, ops=ops)
+                if nasbench.is_valid(arch) and len(arch.ops) == 7 and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
                     new_seqs.append(seq)
                 if len(new_seqs) >= args.new_arch:
