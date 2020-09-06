@@ -63,3 +63,4 @@ class NAO(nn.Module):
         new_encoder_hidden = (new_arch_emb.unsqueeze(0), new_arch_emb.unsqueeze(0))
         decoder_outputs, new_archs = self.decoder(None, new_encoder_hidden, new_encoder_outputs)
         return new_archs, new_predict_value
+        
