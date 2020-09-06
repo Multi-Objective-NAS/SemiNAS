@@ -65,7 +65,7 @@ def generate_arch(n, nasbench, need_perf=False):
         if count >= n:
             return archs, seqs, valid_accs
 
-
+          
 def count_parameters(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters())
 
@@ -106,43 +106,40 @@ class ControllerDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.inputs)
 
-
-def convert_arch_to_seq(matrix, ops):
+      
+def convert_arch_to_seq(matrix, ops, search_space):
     seq = []
     n = len(matrix)
     assert n == len(ops)
+    
     for col in range(1, n):
         for row in range(col):
             seq.append(matrix[row][col]+1)
-        if ops[col] == CONV1X1:
-            seq.append(3)
-        elif ops[col] == CONV3X3:
-            seq.append(4)
-        elif ops[col] == MAXPOOL3X3:
-            seq.append(5)
-        if ops[col] == OUTPUT:
-            seq.append(6)
+        if ops[col] == 'output':
+            seq.append(len(search_space) + 3)
+        elif ops[col] != 'input':
+            seq.append(search_space.index(ops[col]) + 3)
+
     assert len(seq) == (n+2)*(n-1)/2
     return seq
 
 
-def convert_seq_to_arch(seq):
+def convert_seq_to_arch(seq, search_space):
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))
     matrix = [[0 for _ in range(n)] for _ in range(n)]
-    ops = [INPUT]
+    ops = ['input']
+
     for i in range(n-1):
         offset=(i+3)*i//2
         for j in range(i+1):
             matrix[j][i+1] = seq[offset+j] - 1
-        if seq[offset+i+1] == 3:
-            op = CONV1X1
-        elif seq[offset+i+1] == 4:
-            op = CONV3X3
-        elif seq[offset+i+1] == 5:
-            op = MAXPOOL3X3
-        elif seq[offset+i+1] == 6:
-            op = OUTPUT
+        idx = seq[offset+i+1] - 3
+        if idx == len(search_space):
+            op = 'output'
+        else:
+            op = search_space[idx]
         ops.append(op)
+
     return matrix, ops
 
 
@@ -150,4 +147,3 @@ def move_to_cuda(tensor):
     if torch.cuda.is_available():
         return tensor.cuda()
     return tensor
-
