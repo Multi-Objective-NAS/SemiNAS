@@ -7,7 +7,7 @@ This repository contains the code used for [Semi-Supervised Neural Architecture 
 The code is built and tested on Pytorch 1.2
 
 ## NASBench-101 Experiments
-Please refer to nasbench/README.md
+Example) `CUDA_VISIBLE_DEVICES=2 python3 -m nasbench.train_seminas --data ../../datasets/nasbench --output_dir vanilla --semisupervised False`
 
 ## ImageNet Experiments
 Please refer to imagenet/README.md

@@ -65,6 +65,7 @@ def generate_arch(n, nasbench, need_perf=False):
         if count >= n:
             return archs, seqs, valid_accs
 
+          
 def count_parameters(model):
     return np.sum(np.prod(v.size()) for name, v in model.named_parameters())
 
@@ -105,7 +106,7 @@ class ControllerDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.inputs)
 
-
+      
 def convert_arch_to_seq(matrix, ops, search_space):
     seq = []
     n = len(matrix)
@@ -127,6 +128,7 @@ def convert_seq_to_arch(seq, search_space):
     n = int(math.floor(math.sqrt((len(seq) + 1) * 2)))
     matrix = [[0 for _ in range(n)] for _ in range(n)]
     ops = ['input']
+
     for i in range(n-1):
         offset=(i+3)*i//2
         for j in range(i+1):
