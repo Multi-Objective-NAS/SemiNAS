@@ -1,8 +1,10 @@
 import os
 import sys
 import glob
+import csv
 import time
 import copy
+import pathlib
 import logging
 import argparse
 import random
@@ -13,13 +15,16 @@ import torch.utils
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 
-import utils
-from controller import NAO
+sys.path.append('./../../libs/nasbench')
+
+from . import utils
+from .controller import NAO
 from nasbench import api
 
 
 parser = argparse.ArgumentParser()
 # Basic model parameters.
+parser.add_argument('--semisupervised', type=bool, default=True)
 parser.add_argument('--data', type=str, default='data')
 parser.add_argument('--output_dir', type=str, default='models')
 parser.add_argument('--seed', type=int, default=1)
@@ -149,7 +154,11 @@ def main():
     args.source_length = args.encoder_length = args.decoder_length = (args.nodes + 2) * (args.nodes - 1) // 2
 
     nasbench = api.NASBench(os.path.join(args.data, 'nasbench_full.tfrecord'))
-    
+
+    pathlib.Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    history_writer = csv.DictWriter(open(os.path.join(args.output_dir, 'history.csv'), 'w'), fieldnames=['total_time', 'total_epoch', 'valid_accuracy', 'arch_matrix', 'arch_ops'])
+    history_writer.writeheader()
+
     controller = NAO(
         args.encoder_layers,
         args.decoder_layers,
@@ -165,7 +174,7 @@ def main():
     logging.info("param size = %d", utils.count_parameters(controller))
     controller = controller.cuda()
 
-    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, need_perf=True)
+    child_arch_pool, child_seq_pool, child_arch_pool_valid_acc = utils.generate_arch(args.seed_arch, nasbench, need_perf=False)
 
     arch_pool = []
     seq_pool = []
@@ -176,6 +185,15 @@ def main():
             for arch in child_arch_pool:
                 data = nasbench.query(arch)
                 child_arch_pool_valid_acc.append(data['validation_accuracy'])
+
+                tot_time, tot_epoch = nasbench.get_budget_counters()
+                history_writer.writerow({
+                    'total_time': tot_time,
+                    'total_epoch': tot_epoch,
+                    'valid_accuracy': data['validation_accuracy'],
+                    'arch_matrix': arch.matrix,
+                    'arch_ops': arch.ops,
+                })
 
         arch_pool += child_arch_pool
         arch_pool_valid_acc += child_arch_pool_valid_acc
@@ -215,14 +233,15 @@ def main():
         train_controller(controller, train_encoder_input, train_encoder_target, args.pretrain_epochs)
         logging.info('Finish pre-training EPD')
         # Generate synthetic data
-        logging.info('Generate synthetic data for EPD')
-        synthetic_encoder_input, synthetic_encoder_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
-        if args.up_sample_ratio is None:
-            up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
-        else:
-            up_sample_ratio = args.up_sample_ratio
-        all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
-        all_encoder_target = train_encoder_target * up_sample_ratio + synthetic_encoder_target
+        if args.semisupervised:
+            logging.info('Generate synthetic data for EPD')
+            synthetic_encoder_input, synthetic_encoder_target = generate_synthetic_controller_data(nasbench, controller, train_encoder_input, args.random_arch)
+            if args.up_sample_ratio is None:
+                up_sample_ratio = np.ceil(args.random_arch / len(train_encoder_input)).astype(np.int)
+            else:
+                up_sample_ratio = args.up_sample_ratio
+            all_encoder_input = train_encoder_input * up_sample_ratio + synthetic_encoder_input
+            all_encoder_target = train_encoder_target * up_sample_ratio + synthetic_encoder_target
         # Train
         logging.info('Train EPD')
         train_controller(controller, all_encoder_input, all_encoder_target, args.epochs)
