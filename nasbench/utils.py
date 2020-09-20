@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import torch.utils.data
 import torch.nn.functional as F
+from torch.autograd import Variable
 from nasbench import api
 
 INPUT = 'input'
@@ -48,17 +49,17 @@ def generate_arch(n, nasbench, need_perf=False):
     np.random.shuffle(all_keys)
     for key in all_keys:
         fixed_stat, computed_stat = nasbench.get_metrics_from_hash(key)
-        if len(fixed_stat['module_operations']) < 7:
-            continue
+        #if len(fixed_stat['module_operations']) < 7:
+        #    continue
         arch = api.ModelSpec(
             matrix=fixed_stat['module_adjacency'],
             ops=fixed_stat['module_operations'],
         )
         if need_perf:
-            data = nasbench.query(arch)
-            if data['validation_accuracy'] < 0.9:
+            val_acc = nasbench.query(arch, option='valid')
+            if val_acc < 0.9:
                 continue
-            valid_accs.append(data['validation_accuracy'])
+            valid_accs.append(val_acc)
         archs.append(arch)
         seqs.append(convert_arch_to_seq(arch.matrix, arch.ops))
         count += 1
@@ -75,32 +76,37 @@ class ControllerDataset(torch.utils.data.Dataset):
         super(ControllerDataset, self).__init__()
         if targets is not None:
             assert len(inputs) == len(targets)
-        self.inputs = inputs
+        self.inputs = inputs # list of seqs
+        self.len_inputs = [len(i) for i in inputs]
+        self.max_len = max(self.len_inputs)
         self.targets = targets
         self.train = train
         self.sos_id = sos_id
         self.eos_id = eos_id
     
     def __getitem__(self, index):
-        encoder_input = self.inputs[index]
+        encoder_input = self.inputs[index] + [0 for _ in range(self.max_len - len(self.inputs[index]))] # fix length as max_len
+        len_encoder_input = self.len_inputs[index]
         encoder_target = None
         if self.targets is not None:
             encoder_target = [self.targets[index]]
         if self.train:
             decoder_input = [self.sos_id] + encoder_input[:-1]
             sample = {
-                'encoder_input': torch.LongTensor(encoder_input),
-                'encoder_target': torch.FloatTensor(encoder_target),
-                'decoder_input': torch.LongTensor(decoder_input),
-                'decoder_target': torch.LongTensor(encoder_input),
+                'encoder_input': np.array(encoder_input, dtype=np.int64),
+                'encoder_input_len': len_encoder_input,
+                'encoder_target': np.array(encoder_target, dtype=np.float64),
+                'decoder_input': np.array(decoder_input, dtype=np.int64),
+                'decoder_target': np.array(encoder_input, dtype=np.int64),
             }
         else:
             sample = {
-                'encoder_input': torch.LongTensor(encoder_input),
-                'decoder_target': torch.LongTensor(encoder_input),
+                'encoder_input': np.array(encoder_input, dtype=np.int64),
+                'encoder_input_len': len_encoder_input,
+                'decoder_target': np.array(encoder_input, dtype=np.int64),
             }
             if encoder_target is not None:
-                sample['encoder_target'] = torch.FloatTensor(encoder_target)
+                sample['encoder_target'] = np.array(encoder_target, dtype=np.float64)
         return sample
     
     def __len__(self):

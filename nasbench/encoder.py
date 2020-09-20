@@ -4,9 +4,11 @@ from __future__ import print_function
 
 import logging
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 
 
 class Encoder(nn.Module):
@@ -53,11 +55,15 @@ class Encoder(nn.Module):
         predict_value = torch.sigmoid(x)
         return predict_value
 
-    def forward(self, x):
+    def forward(self, x, x_len):
         x = self.embedding(x)
         x = F.dropout(x, self.dropout, training=self.training)
         residual = x
+
+        x = pack_padded_sequence(x, x_len, batch_first=True)
         x, hidden = self.rnn(x)
+        x = pad_packed_sequence(x, batch_first=True)[0]
+
         x = self.out_proj(x)
         x = residual + x
         x = F.normalize(x, 2, dim=-1)
@@ -79,8 +85,8 @@ class Encoder(nn.Module):
         predict_value = torch.sigmoid(x)
         return encoder_outputs, encoder_hidden, arch_emb, predict_value
     
-    def infer(self, x, predict_lambda, direction='-'):
-        encoder_outputs, encoder_hidden, arch_emb, predict_value = self(x)
+    def infer(self, x, x_len, predict_lambda, direction='-'):
+        encoder_outputs, encoder_hidden, arch_emb, predict_value = self(x, x_len)
         grads_on_outputs = torch.autograd.grad(predict_value, encoder_outputs, torch.ones_like(predict_value))[0]
         if direction == '+':
             new_encoder_outputs = encoder_outputs + predict_lambda * grads_on_outputs
