@@ -277,7 +277,7 @@ def main():
             for seq in new_seq:
                 matrix, ops = utils.convert_seq_to_arch(seq)
                 arch = api.ModelSpec(matrix=matrix, ops=ops)
-                if nasbench.is_valid(arch) and len(arch.ops) == 7 and seq not in train_encoder_input and seq not in new_seqs:
+                if nasbench.is_valid(arch) and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
                     new_seqs.append(seq)
                 if len(new_seqs) >= args.new_arch:
