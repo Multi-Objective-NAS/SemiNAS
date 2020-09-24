@@ -62,26 +62,27 @@ def controller_train(train_queue, model, optimizer):
     model.train()
     for step, sample in enumerate(train_queue):
         encoder_input_unsorted = sample['encoder_input'].long() # shape maybe (batch size, max seq length, word length)
-        encoder_input_len_unsorted = sample['encoder_input_len']
         encoder_target_unsorted = sample['encoder_target'].float()
         decoder_input_unsorted = sample['decoder_input'].long()
         decoder_target_unsorted = sample['decoder_target'].long()
+        input_len_unsorted = sample['input_len']
         
         # sort input batch
-        encoder_input_len, sort_index = torch.sort(encoder_input_len_unsorted, 0, descending=True)
-        encoder_input_len = encoder_input_len.numpy().tolist()
+        input_len, sort_index = torch.sort(input_len_unsorted, 0, descending=True)
+        input_len = input_len.numpy().tolist()
         encoder_input = torch.index_select(encoder_input_unsorted, 0, sort_index)
         encoder_target = torch.index_select(encoder_target_unsorted, 0, sort_index)
         decoder_input = torch.index_select(decoder_input_unsorted, 0, sort_index)
         decoder_target = torch.index_select(decoder_target_unsorted, 0, sort_index)
 
+        # move to cuda
         encoder_input = utils.move_to_cuda(encoder_input) # shape maybe (batch size, max seq length, word length)
         encoder_target = utils.move_to_cuda(encoder_target)
         decoder_input = utils.move_to_cuda(decoder_input)
         decoder_target = utils.move_to_cuda(decoder_target)
 
         optimizer.zero_grad()
-        predict_value, log_prob, arch = model(encoder_input, encoder_input_len, decoder_input)
+        predict_value, log_prob, arch = model(encoder_input, input_len, decoder_input)
         loss_1 = F.mse_loss(predict_value.squeeze(), encoder_target.squeeze())
         loss_2 = F.nll_loss(log_prob.contiguous().view(-1, log_prob.size(-1)), decoder_target.view(-1))
         loss = args.trade_off * loss_1 + (1 - args.trade_off) * loss_2
@@ -103,16 +104,16 @@ def controller_infer(queue, model, step, direction='+'):
     model.eval()
     for i, sample in enumerate(queue):
         encoder_input_unsorted = sample['encoder_input'].long() # shape maybe (batch size, max seq length, word length)
-        encoder_input_len_unsorted = sample['encoder_input_len']
+        input_len_unsorted = sample['input_len']
         # sort input batch
-        encoder_input_len, sort_index = torch.sort(encoder_input_len_unsorted, 0, descending=True)
-        encoder_input_len = encoder_input_len.numpy().tolist()
+        input_len, sort_index = torch.sort(input_len_unsorted, 0, descending=True)
+        input_len = input_len.numpy().tolist()
         encoder_input = torch.index_select(encoder_input_unsorted, 0, sort_index)
         # move to gpu
         encoder_input = utils.move_to_cuda(encoder_input)
         
         model.zero_grad()
-        new_arch, new_predict_value = model.generate_new_arch(encoder_input, encoder_input_len, step, direction=direction)
+        new_arch, new_predict_value = model.generate_new_arch(encoder_input, input_len, step, direction=direction)
         new_arch_list.extend(new_arch.data.squeeze().tolist())
         new_predict_values.extend(new_predict_value.data.squeeze().tolist())
     return new_arch_list, new_predict_values
@@ -145,15 +146,15 @@ def generate_synthetic_controller_data(nasbench, model, base_arch=None, random_a
             model.eval()
             for sample in controller_synthetic_queue:
                 encoder_input_unsorted = sample['encoder_input'].long() # shape maybe (batch size, max seq length, word length)
-                encoder_input_len_unsorted = sample['encoder_input_len']
+                input_len_unsorted = sample['input_len']
                 # sort input batch
-                encoder_input_len, sort_index = torch.sort(encoder_input_len_unsorted, 0, descending=True)
-                encoder_input_len = encoder_input_len.numpy().tolist()
+                input_len, sort_index = torch.sort(input_len_unsorted, 0, descending=True)
+                input_len = input_len.numpy().tolist()
                 encoder_input = torch.index_select(encoder_input_unsorted, 0, sort_index)
                 # move to gpu
                 encoder_input = utils.move_to_cuda(encoder_input)
                 
-                _, _, _, predict_value = model.encoder(encoder_input, encoder_input_len)
+                _, _, _, predict_value = model.encoder(encoder_input, input_len)
                 random_synthetic_target += predict_value.data.squeeze().tolist()
         assert len(random_synthetic_input) == len(random_synthetic_target)
     synthetic_input = random_synthetic_input

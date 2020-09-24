@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import utils
+from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 
 SOS_ID = 0
 EOS_ID = 0
@@ -73,7 +75,9 @@ class Decoder(nn.Module):
         for i in range(self.n):
             self.offsets.append( (i + 3) * i // 2 - 1)
     
-    def forward(self, x, encoder_hidden=None, encoder_outputs=None):
+    def forward(self, x, x_len, encoder_hidden=None, encoder_outputs=None):
+        # x is decoder_inputs = [0] + encoder_inputs[:-1]
+
         decoder_hidden = self._init_state(encoder_hidden)
         if x is not None:
             bsz = x.size(0)
@@ -81,17 +85,30 @@ class Decoder(nn.Module):
             x = self.embedding(x)
             x = F.dropout(x, self.dropout, training=self.training)
             residual = x
+            
+            x = pack_padded_sequence(x, x_len, batch_first=True)
             x, hidden = self.rnn(x, decoder_hidden)
+            x = pad_packed_sequence(x, batch_first=True)[0]
+
             x = (residual + x) * math.sqrt(0.5)
             residual = x
-            x, _ = self.attention(x, encoder_outputs)
+            
+            # create mask
+            mask = torch.zeros(bsz, x.size(1))
+            for i,l in enumerate(x_len):
+                for j in range(l):
+                    mask[i][j] = 1
+            mask = (mask == 0).unsqueeze(1)
+            mask = utils.move_to_cuda(mask)
+            
+            x, _ = self.attention(x, encoder_outputs, mask=mask)
             x = (residual + x) * math.sqrt(0.5)
             predicted_softmax = F.log_softmax(self.out(x.view(-1, self.hidden_size)), dim=-1)
             predicted_softmax = predicted_softmax.view(bsz, tgt_len, -1)
             return predicted_softmax, None
 
 
-        # inference
+        # inference : not using xlen. pad packed.
         assert x is None
         bsz = encoder_hidden[0].size(1)
         length = self.length

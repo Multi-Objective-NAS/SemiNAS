@@ -86,7 +86,7 @@ class ControllerDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, index):
         encoder_input = self.inputs[index] + [0 for _ in range(self.max_len - len(self.inputs[index]))] # fix length as max_len
-        len_encoder_input = self.len_inputs[index]
+        len_input = self.len_inputs[index]
         encoder_target = None
         if self.targets is not None:
             encoder_target = [self.targets[index]]
@@ -94,16 +94,16 @@ class ControllerDataset(torch.utils.data.Dataset):
             decoder_input = [self.sos_id] + encoder_input[:-1]
             sample = {
                 'encoder_input': np.array(encoder_input, dtype=np.int64),
-                'encoder_input_len': len_encoder_input,
                 'encoder_target': np.array(encoder_target, dtype=np.float64),
                 'decoder_input': np.array(decoder_input, dtype=np.int64),
                 'decoder_target': np.array(encoder_input, dtype=np.int64),
+                'input_len': len_input,
             }
         else:
             sample = {
                 'encoder_input': np.array(encoder_input, dtype=np.int64),
-                'encoder_input_len': len_encoder_input,
                 'decoder_target': np.array(encoder_input, dtype=np.int64),
+                'input_len': len_input,
             }
             if encoder_target is not None:
                 sample['encoder_target'] = np.array(encoder_target, dtype=np.float64)
