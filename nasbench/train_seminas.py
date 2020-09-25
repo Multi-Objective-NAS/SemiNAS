@@ -275,7 +275,7 @@ def main():
             logging.info('Generate new architectures with step size %d', predict_step_size)
             new_seq, new_perfs = controller_infer(controller_infer_queue, controller, predict_step_size, direction='+')
             for seq in new_seq:
-                matrix, ops = utils.convert_seq_to_arch(seq)
+                matrix, ops = utils.convert_seq_to_arch(seq, nasbench.search_space)
                 arch = api.ModelSpec(matrix=matrix, ops=ops)
                 if nasbench.is_valid(arch) and seq not in train_encoder_input and seq not in new_seqs:
                     new_archs.append(arch)
