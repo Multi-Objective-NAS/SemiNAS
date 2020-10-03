@@ -99,14 +99,7 @@ class Decoder(nn.Module):
         decoded_ids = encoder_hidden[0].new(bsz, 0).fill_(0).long()
         
         def decode(step, output):
-            if step in self.offsets:  # sample operation, should be in [3, 7]
-                if step != (self.n + 2) * (self.n - 1) / 2 - 1:
-                    symbol = output[:, 3:6].topk(1)[1] + 3
-                else:
-                    symbol = output[:, 6:].topk(1)[1] + 6
-            else:  # sample connection, should be in [1, 2]
-                symbol = output[:, 1:3].topk(1)[1] + 1
-            return symbol
+            return output.topk(1)[1]
         
         for i in range(length):
             x = self.embedding(decoder_input[:, i:i+1])
