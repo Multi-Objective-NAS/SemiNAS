@@ -55,7 +55,7 @@ class Decoder(nn.Module):
                  dropout,
                  length,
                  ):
-        super(Decoder, self).__init__()
+        super().__init__()
         self.layers = layers
         self.hidden_size = hidden_size
         self.length = length
@@ -84,7 +84,7 @@ class Decoder(nn.Module):
             x, hidden = self.rnn(x, decoder_hidden)
             x = (residual + x) * math.sqrt(0.5)
             residual = x
-            x, _ = self.attention(x, encoder_outputs)
+            # x, _ = self.attention(x, encoder_outputs)
             x = (residual + x) * math.sqrt(0.5)
             predicted_softmax = F.log_softmax(self.out(x.view(-1, self.hidden_size)), dim=-1)
             predicted_softmax = predicted_softmax.view(bsz, tgt_len, -1)
@@ -108,7 +108,7 @@ class Decoder(nn.Module):
             x, decoder_hidden = self.rnn(x, decoder_hidden)
             x = (residual + x) * math.sqrt(0.5)
             residual = x
-            x, _ = self.attention(x, encoder_outputs)
+            # x, _ = self.attention(x, encoder_outputs)
             x = (residual + x) * math.sqrt(0.5)
             output = self.out(x.squeeze(1))
             symbol = decode(i, output)
